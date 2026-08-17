@@ -1,1 +1,113 @@
+name: Render and Upload Koshien Short
+
+on:
+  repository_dispatch:
+    types: [new-game]
+  workflow_dispatch:
+    inputs:
+      teamA:
+        description: "チームA"
+        required: true
+        default: "サンプル高校"
+      scoreA:
+        description: "スコアA"
+        required: true
+        default: "5"
+      teamB:
+        description: "チームB"
+        required: true
+        default: "テスト高校"
+      scoreB:
+        description: "スコアB"
+        required: true
+        default: "3"
+      tournament:
+        description: "大会名"
+        required: true
+        default: "選手権テスト大会"
+
+jobs:
+  build-video:
+    runs-on: ubuntu-latest
+
+    services:
+      voicevox:
+        image: voicevox/voicevox_engine:cpu-latest
+        ports:
+          - 50021:50021
+
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@v4
+
+      - name: Node.jsセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 依存パッケージをインストール
+        run: npm install
+
+      - name: game.json を作成（repository_dispatch 経由）
+        if: github.event_name == 'repository_dispatch'
+        run: echo '${{ toJSON(github.event.client_payload) }}' > game.json
+
+      - name: game.json を作成（手動実行 workflow_dispatch 経由）
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          cat <<EOF > game.json
+          {
+            "teamA": "${{ github.event.inputs.teamA }}",
+            "scoreA": ${{ github.event.inputs.scoreA }},
+            "teamB": "${{ github.event.inputs.teamB }}",
+            "scoreB": ${{ github.event.inputs.scoreB }},
+            "tournament": "${{ github.event.inputs.tournament }}",
+            "hashtags": "#高校野球 #高校野球速報 #甲子園への道"
+          }
+          EOF
+
+      - name: コンポジションHTMLを生成
+        run: npm run build
+
+      - name: HyperFramesでMP4にレンダリング
+        run: npx hyperframes render composition/index.html --output ../../output.mp4
+        working-directory: .
+
+      - name: VOICEVOXエンジンの起動を待機
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:50021/version > /dev/null; then
+              echo "VOICEVOX起動確認OK"
+              exit 0
+            fi
+            echo "待機中... ($i)"
+            sleep 2
+          done
+          echo "VOICEVOXの起動確認がタイムアウトしました（ナレーションなしで続行します）"
+
+      - name: ずんだもんナレーションを生成
+        run: npm run narrate
+        continue-on-error: true
+
+      - name: ナレーション＋BGMを動画に合成
+        run: npm run mix-audio
+        continue-on-error: true
+
+      - name: YouTube Shortsにアップロード
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: npm run upload
+
+      - name: 生成物をアーティファクトとして保存（デバッグ用）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: koshien-short-${{ github.run_id }}
+          path: |
+            output.mp4
+            narration.wav
+            composition/index.html
+          retention-days: 7
 
