@@ -70,8 +70,7 @@ jobs:
         run: npm run build
 
       - name: HyperFramesでMP4にレンダリング
-        run: npx hyperframes render composition/index.html --output ../../output.mp4
-        working-directory: .
+        run: npx hyperframes render -c composition/index.html -o output.mp4
 
       - name: VOICEVOXエンジンの起動を待機
         run: |
@@ -83,7 +82,7 @@ jobs:
             echo "待機中... ($i)"
             sleep 2
           done
-          echo "VOICEVOXの起動確認がタイムアウトしました（ナレーションなしで続行します）"
+          echo "VOICEVOXの起動確認がタイユアウトしました（ナレーションなしで続行します）"
 
       - name: ずんだもんナレーションを生成
         run: npm run narrate
