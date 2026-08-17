@@ -43,7 +43,7 @@ jobs:
       - name: Node.jsセットアップ
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: 依存パッケージをインストール
         run: npm install
@@ -110,4 +110,3 @@ jobs:
             narration.wav
             composition/index.html
           retention-days: 7
-
