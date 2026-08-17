@@ -1,1 +1,19 @@
 
+{
+    "name": "koukouyakyu-video-bot",
+    "version": "1.0.0",
+    "private": true,
+    "description": "高校野球の試合結果を自動でショート動画化してYouTubeにアップロードするbot",
+    "scripts": {
+          "build": "node scripts/build-composition.js",
+          "narrate": "node scripts/generate-narration.js",
+          "mix-audio": "node scripts/mix-audio.js",
+          "upload": "node scripts/upload-youtube.js"
+    },
+    "dependencies": {
+          "googleapis": "^144.0.0"
+    },
+    "devDependencies": {
+          "hyperframes": "latest"
+    }
+}
