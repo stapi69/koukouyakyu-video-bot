@@ -90,18 +90,26 @@ jobs:
             echo "Copied output.mp4 to output_final.mp4"
           fi
           test -f output_final.mp4 || (echo "FATAL: no output_final.mp4" && exit 1)
+          ls -la output_final.mp4
 
       - name: YouTube Shortsにアップロード
+        continue-on-error: true
         env:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-        run: node scripts/upload-youtube.js
+        run: |
+          node scripts/upload-youtube.js 2>&1 | tee /tmp/upload_log.txt
+          EXIT_CODE=${PIPESTATUS[0]}
+          echo "EXIT_CODE: $EXIT_CODE" >> /tmp/upload_log.txt
+          exit $EXIT_CODE
 
-      - name: 動画をArtifactとして保存
+      - name: ログとmp4をArtifactとして保存
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: koshien-short
-          path: output_final.mp4
-          retention-days: 7
-
+          name: debug-artifacts
+          path: |
+            /tmp/upload_log.txt
+            output_final.mp4
+          retention-days: 1
