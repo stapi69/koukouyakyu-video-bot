@@ -100,6 +100,13 @@ jobs:
           fi
           test -f output_final.mp4 || (echo "FATAL: no output_final.mp4" && exit 1)
 
+      - name: Node環境・googleapis確認
+        run: |
+          echo "node version: $(node --version)"
+          node -e "try { require('googleapis'); console.log('googleapis OK'); } catch(e) { console.error('googleapis ERROR:', e.message); process.exit(1); }"
+          ls -la node_modules/googleapis/package.json 2>/dev/null || echo "googleapis not in node_modules"
+          ls -la output_final.mp4 && echo "output_final.mp4 OK" || echo "output_final.mp4 MISSING"
+
       - name: YouTube Shortsにアップロード
         env:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
@@ -113,6 +120,7 @@ jobs:
           name: koshien-short
           path: output_final.mp4
           retention-days: 7
+
 
 
 
