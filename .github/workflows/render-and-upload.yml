@@ -112,7 +112,18 @@ jobs:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-        run: node scripts/upload-youtube.js
+        run: |
+          echo "=== アクセストークン取得テスト ==="
+          TOKEN_RESP=$(curl -s -X POST https://oauth2.googleapis.com/token             -d "client_id=${YOUTUBE_CLIENT_ID}"             -d "client_secret=${YOUTUBE_CLIENT_SECRET}"             -d "refresh_token=${YOUTUBE_REFRESH_TOKEN}"             -d "grant_type=refresh_token")
+          echo "Token response: $TOKEN_RESP" | head -c 200
+          ACCESS_TOKEN=$(echo "$TOKEN_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('access_token','ERROR: '+str(d.get('error',''))))")
+          echo "Access token: ${ACCESS_TOKEN:0:30}..."
+          if [[ "$ACCESS_TOKEN" == ERROR* ]]; then
+            echo "❌ トークン取得失敗"
+            exit 1
+          fi
+          echo "✅ トークン取得成功 → Node.jsでアップロード実行"
+          node scripts/upload-youtube.js
 
       - name: 動画をArtifactとして保存
         uses: actions/upload-artifact@v4
@@ -120,6 +131,7 @@ jobs:
           name: koshien-short
           path: output_final.mp4
           retention-days: 7
+
 
 
 
