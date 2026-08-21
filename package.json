@@ -1,19 +1,15 @@
-
 {
-    "name": "koukouyakyu-video-bot",
-    "version": "1.0.0",
-    "private": true,
-    "description": "高校野球の試合結果を自動でショート動画化してYouTubeにアップロードするbot",
-    "scripts": {
-          "build": "node scripts/build-composition.js",
-          "narrate": "node scripts/generate-narration.js",
-          "mix-audio": "node scripts/mix-audio.js",
-          "upload": "node scripts/upload-youtube.js"
-    },
-    "dependencies": {
-          "googleapis": "^144.0.0"
-    },
-    "devDependencies": {
-          "hyperframes": "latest"
-    }
+  "name": "koukouyakyu-video-bot",
+  "version": "1.0.0",
+  "description": "高校野球速報ダイジェスト動画自動生成bot",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "google-auth-library": "^9.0.0",
+    "googleapis": "^144.0.0",
+    "puppeteer": "^22.0.0"
+  },
+  "license": "MIT"
 }
