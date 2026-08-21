@@ -33,7 +33,11 @@ function pickRandomBgm() {
 
 function main() {
   if (!fs.existsSync(NARRATION_PATH)) {
-    console.log('narration.wav が見つからないため、音声合成をスキップします。');
+    console.log('narration/combined.wav が見つからないため、output.mp4をそのままコピーします。');
+    if (fs.existsSync(VIDEO_PATH)) {
+      fs.copyFileSync(VIDEO_PATH, FINAL_PATH);
+      console.log('output_final.mp4 を生成しました（ナレーションなし）。');
+    }
     return;
   }
   if (!fs.existsSync(VIDEO_PATH)) {
@@ -85,4 +89,5 @@ function main() {
 }
 
 main();
+
 
