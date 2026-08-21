@@ -1,26 +1,82 @@
 const fs = require('fs');
-const axios = require('axios');
+const http = require('http');
 const { execSync } = require('child_process');
 
 const game = JSON.parse(fs.readFileSync('game.json', 'utf-8'));
-const games = game.games;
-const date = game.date;
+const games = game.games || [game];
+const date = game.date || '';
 const SPEAKER = 3; // ずんだもん
-const VOICEVOX_URL = 'http://localhost:50021';
+
+function httpPost(url, data) {
+  return new Promise((resolve, reject) => {
+    const urlObj = new URL(url);
+    const body = JSON.stringify(data);
+    const options = {
+      hostname: urlObj.hostname,
+      port: urlObj.port || 50021,
+      path: urlObj.pathname + urlObj.search,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+    };
+    const req = http.request(options, res => {
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+function httpPostBinary(url, data) {
+  return new Promise((resolve, reject) => {
+    const urlObj = new URL(url);
+    const body = JSON.stringify(data);
+    const options = {
+      hostname: urlObj.hostname,
+      port: urlObj.port || 50021,
+      path: urlObj.pathname + urlObj.search,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+    };
+    const req = http.request(options, res => {
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
 
 async function generateVoice(text, filename) {
-  const query = await axios.post(`${VOICEVOX_URL}/audio_query?text=${encodeURIComponent(text)}&speaker=${SPEAKER}`);
-  const audio = await axios.post(`${VOICEVOX_URL}/synthesis?speaker=${SPEAKER}`, query.data, { responseType: 'arraybuffer' });
-  fs.writeFileSync(filename, Buffer.from(audio.data));
+  const base = `http://localhost:50021`;
+  const queryRes = await new Promise((resolve, reject) => {
+    const path = `/audio_query?text=${encodeURIComponent(text)}&speaker=${SPEAKER}`;
+    const options = { hostname: 'localhost', port: 50021, path, method: 'POST' };
+    const req = http.request(options, res => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve(JSON.parse(Buffer.concat(chunks).toString())));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+
+  const audioRes = await httpPostBinary(
+    `http://localhost:50021/synthesis?speaker=${SPEAKER}`,
+    queryRes
+  );
+  fs.writeFileSync(filename, audioRes);
 }
 
 async function main() {
   fs.mkdirSync('narration', { recursive: true });
 
-  // オープニング
   await generateVoice(`${date}の高校野球、試合結果ダイジェストです。`, 'narration/opening.wav');
 
-  // 各試合
   for (let i = 0; i < games.length; i++) {
     const g = games[i];
     const winner = g.scoreA > g.scoreB ? g.teamA : g.teamB;
@@ -28,10 +84,8 @@ async function main() {
     await generateVoice(text, `narration/game${i}.wav`);
   }
 
-  // エンディング
   await generateVoice('本日も熱戦をお届けしました。チャンネル登録よろしくお願いします！', 'narration/ending.wav');
 
-  // 全音声を結合
   const files = [
     'narration/opening.wav',
     ...games.map((_, i) => `narration/game${i}.wav`),
