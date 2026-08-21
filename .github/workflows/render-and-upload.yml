@@ -82,15 +82,23 @@ jobs:
       - name: BGMをミックス
         run: node scripts/mix-audio.js
 
-      - name: output_final.mp4を確実に生成
+      - name: ファイル存在チェック（デバッグ）
         run: |
-          echo "=== ファイル確認 ==="
-          ls -la output*.mp4 narration/combined.wav 2>/dev/null || echo "一部なし"
+          echo "=== カレントディレクトリ ==="
+          pwd
+          echo "=== 全ファイル一覧 ==="
+          ls -la
+          echo "=== output.mp4 ==="
+          test -f output.mp4 && echo "EXISTS" || echo "MISSING"
+          echo "=== output_final.mp4 ==="
+          test -f output_final.mp4 && echo "EXISTS" || echo "MISSING"
+          echo "=== narration/ ==="
+          ls -la narration/ 2>/dev/null || echo "dir not found"
           if [ ! -f output_final.mp4 ] && [ -f output.mp4 ]; then
             cp output.mp4 output_final.mp4
-            echo "✅ output.mp4 → output_final.mp4 にコピーしました"
+            echo "COPIED output.mp4 to output_final.mp4"
           fi
-          ls -la output_final.mp4 2>/dev/null && echo "output_final.mp4 存在確認OK" || echo "❌ output_final.mp4 なし"
+          test -f output_final.mp4 || (echo "FATAL: no output_final.mp4" && exit 1)
 
       - name: YouTube Shortsにアップロード
         env:
@@ -105,5 +113,6 @@ jobs:
           name: koshien-short
           path: output_final.mp4
           retention-days: 7
+
 
 
