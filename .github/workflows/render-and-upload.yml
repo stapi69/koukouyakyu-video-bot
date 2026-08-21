@@ -82,6 +82,9 @@ jobs:
       - name: BGMをミックス
         run: node scripts/mix-audio.js
 
+      - name: ファイル確認（デバッグ）
+        run: ls -la *.mp4 || echo "mp4ファイルなし"
+
       - name: YouTube Shortsにアップロード
         env:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
@@ -93,5 +96,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: koshien-short
-          path: output-final.mp4
+          path: output_final.mp4
           retention-days: 7
