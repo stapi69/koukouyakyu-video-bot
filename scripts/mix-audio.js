@@ -6,7 +6,7 @@ const path = require('path');
 const { execSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
-const NARRATION_PATH = path.join(ROOT, 'narration.wav');
+const NARRATION_PATH = path.join(ROOT, 'narration', 'combined.wav');
 const VIDEO_PATH = path.join(ROOT, 'output.mp4');
 const BGM_DIR = path.join(ROOT, 'assets', 'bgm');
 const FINAL_PATH = path.join(ROOT, 'output_final.mp4');
@@ -85,3 +85,4 @@ function main() {
 }
 
 main();
+
