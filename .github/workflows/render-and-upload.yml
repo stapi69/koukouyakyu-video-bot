@@ -83,7 +83,13 @@ jobs:
         run: node scripts/mix-audio.js
 
       - name: ファイル確認（デバッグ）
-        run: ls -la *.mp4 || echo "mp4ファイルなし"
+        run: |
+          echo "=== ROOT MP4/WAV ==="
+          ls -la *.mp4 *.wav 2>/dev/null || echo "なし"
+          echo "=== narration/ ==="
+          ls -la narration/ 2>/dev/null || echo "narrationディレクトリなし"
+          echo "=== frames/ ==="
+          ls frames/ 2>/dev/null | wc -l || echo "framesディレクトリなし"
 
       - name: YouTube Shortsにアップロード
         env:
@@ -98,3 +104,4 @@ jobs:
           name: koshien-short
           path: output_final.mp4
           retention-days: 7
+
