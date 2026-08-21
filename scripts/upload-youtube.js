@@ -3,11 +3,11 @@ const path = require('path');
 const { google } = require('googleapis');
 
 async function main() {
-  const videoPath = path.join(__dirname, '..', 'output-final.mp4');
+  const videoPath = path.join(__dirname, '..', 'output_final.mp4');
   const gameJsonPath = path.join(__dirname, '..', 'game.json');
 
   if (!fs.existsSync(videoPath)) {
-    console.error('output-final.mp4 が見つかりません。');
+    console.error('output_final.mp4 が見つかりません。');
     process.exit(1);
   }
 
