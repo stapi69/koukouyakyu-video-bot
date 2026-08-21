@@ -97,7 +97,14 @@ jobs:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-        run: node scripts/upload-youtube.js
+        run: |
+          node scripts/upload-youtube.js 2>&1 | tee /tmp/upload_out.txt
+          EXIT_CODE=${PIPESTATUS[0]}
+          echo "## YouTube Upload Result" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat /tmp/upload_out.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          exit $EXIT_CODE
 
       - name: 動画をArtifactとして保存
         uses: actions/upload-artifact@v4
@@ -105,4 +112,5 @@ jobs:
           name: koshien-short
           path: output_final.mp4
           retention-days: 7
+
 
