@@ -53,6 +53,13 @@ jobs:
       - name: 依存パッケージをインストール
         run: npm install
 
+      - name: Puppeteerの依存ライブラリをインストール
+        run: |
+          sudo apt-get install -y \
+            libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+            libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
+            libxfixes3 libxrandr2 libgbm1 libasound2
+
       - name: game.jsonを生成
         run: |
           if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
@@ -69,10 +76,8 @@ jobs:
       - name: コンポジションHTMLを生成
         run: node scripts/build-composition.js
 
-      - name: HyperFramesで動画レンダリング
-        run: |
-          npm install -g @hyperframes/cli
-          hf render composition/index.html --output output.mp4 --width 1080 --height 1920 --fps 30 --duration auto
+      - name: Puppeteerで動画レンダリング
+        run: node scripts/render-video.js
 
       - name: BGMをミックス
         run: node scripts/mix-audio.js
