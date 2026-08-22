@@ -39,11 +39,11 @@ jobs:
         with:
           node-version: "22"
 
-      - name: FFmpeg・日本語フォント・edge-ttsをインストール
+      - name: FFmpeg・日本語フォント・espeak-ngをインストール
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg fonts-noto-cjk
-          pip install edge-tts --break-system-packages
+          sudo apt-get install -y espeak-ng
 
       - name: 依存パッケージをインストール
         run: npm install
@@ -63,7 +63,7 @@ jobs:
             echo '{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}","games":[{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}"}],"date":"${{ inputs.tournament }}"}' > game.json
           fi
 
-      - name: ナレーション音声を生成（edge-tts）
+      - name: ナレーション音声を生成（espeak-ng）
         run: node scripts/generate-narration.js
 
       - name: コンポジションHTMLを生成
@@ -112,4 +112,5 @@ jobs:
           name: koshien-short
           path: output_final.mp4
           retention-days: 7
+
 
