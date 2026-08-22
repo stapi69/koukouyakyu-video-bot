@@ -6,10 +6,13 @@ const game = JSON.parse(fs.readFileSync('game.json', 'utf-8'));
 const games = game.games || [game];
 const date = game.date || '';
 const SPEAKER = 3; // ずんだもん
-const VOICEVOX_BASE = 'http://localhost:50021';
+
+// CPU版VoiceVoxは非常に遅いため長めのタイムアウトを設定
+const QUERY_TIMEOUT_MS = 60000;   // 60秒
+const SYNTH_TIMEOUT_MS = 300000;  // 5分（CPU合成は非常に遅い）
 
 async function generateVoice(text, filename) {
-  console.log(`生成中: ${text.slice(0, 20)}... → ${filename}`);
+  console.log(`生成中 [${filename}]: "${text.slice(0, 30)}..."`);
 
   // Step 1: audio_query
   const queryData = await new Promise((resolve, reject) => {
@@ -20,25 +23,29 @@ async function generateVoice(text, filename) {
         const chunks = [];
         res.on('data', c => chunks.push(c));
         res.on('end', () => {
+          const raw = Buffer.concat(chunks).toString();
           try {
-            const parsed = JSON.parse(Buffer.concat(chunks).toString());
-            if (parsed.detail) {
-              reject(new Error('audio_query error: ' + parsed.detail));
-            } else {
-              resolve(parsed);
-            }
+            const parsed = JSON.parse(raw);
+            if (parsed.detail) reject(new Error('audio_query error: ' + parsed.detail));
+            else resolve(parsed);
           } catch (e) {
-            reject(new Error('audio_query JSON parse error: ' + e.message));
+            reject(new Error('audio_query parse error: ' + e.message + ' | raw: ' + raw.slice(0, 100)));
           }
         });
       }
     );
-    req.on('error', reject);
-    req.setTimeout(10000, () => reject(new Error('audio_query timeout')));
+    req.on('error', e => reject(new Error('audio_query network error: ' + e.message)));
+    const timer = setTimeout(() => {
+      req.destroy();
+      reject(new Error(`audio_query timeout (${QUERY_TIMEOUT_MS}ms)`));
+    }, QUERY_TIMEOUT_MS);
+    req.on('close', () => clearTimeout(timer));
     req.end();
   });
 
-  // Step 2: synthesis
+  console.log(`  audio_query OK → synthesis開始 (CPU版は時間がかかります)`);
+
+  // Step 2: synthesis（CPU版は非常に遅い）
   const body = JSON.stringify(queryData);
   const audioData = await new Promise((resolve, reject) => {
     const req = http.request(
@@ -58,44 +65,49 @@ async function generateVoice(text, filename) {
         res.on('end', () => resolve(Buffer.concat(chunks)));
       }
     );
-    req.on('error', reject);
-    req.setTimeout(30000, () => reject(new Error('synthesis timeout')));
+    req.on('error', e => reject(new Error('synthesis network error: ' + e.message)));
+    const timer = setTimeout(() => {
+      req.destroy();
+      reject(new Error(`synthesis timeout (${SYNTH_TIMEOUT_MS}ms) - CPU版が遅すぎる可能性`));
+    }, SYNTH_TIMEOUT_MS);
+    req.on('close', () => clearTimeout(timer));
     req.write(body);
     req.end();
   });
 
   if (audioData.length < 100) {
-    throw new Error(`synthesis returned too small data: ${audioData.length} bytes`);
+    throw new Error(`synthesis結果が小さすぎます: ${audioData.length} bytes`);
   }
 
   fs.writeFileSync(filename, audioData);
-  console.log(`  ✅ 生成完了: ${audioData.length} bytes`);
+  console.log(`  ✅ ${filename}: ${audioData.length} bytes`);
 }
 
 async function main() {
+  console.log('VoiceVoxナレーション生成開始');
   fs.mkdirSync('narration', { recursive: true });
 
-  await generateVoice(`${date}の高校野球、試合結果ダイジェストです。`, 'narration/opening.wav');
+  const texts = [
+    { text: `${date}の高校野球、試合結果ダイジェストです。`, file: 'narration/opening.wav' },
+    ...games.map((g, i) => {
+      const winner = g.scoreA > g.scoreB ? g.teamA : g.teamB;
+      return {
+        text: `${g.tournament}、${g.teamA} ${g.scoreA}対${g.scoreB} ${g.teamB}。${winner}が勝利しました。`,
+        file: `narration/game${i}.wav`
+      };
+    }),
+    { text: '本日も熱戦をお届けしました。チャンネル登録よろしくお願いします！', file: 'narration/ending.wav' }
+  ];
 
-  for (let i = 0; i < games.length; i++) {
-    const g = games[i];
-    const winner = g.scoreA > g.scoreB ? g.teamA : g.teamB;
-    const text = `${g.tournament}、${g.teamA} ${g.scoreA}対${g.scoreB} ${g.teamB}。${winner}が勝利しました。`;
-    await generateVoice(text, `narration/game${i}.wav`);
+  for (const { text, file } of texts) {
+    await generateVoice(text, file);
   }
 
-  await generateVoice('本日も熱戦をお届けしました。チャンネル登録よろしくお願いします！', 'narration/ending.wav');
-
-  const files = [
-    'narration/opening.wav',
-    ...games.map((_, i) => `narration/game${i}.wav`),
-    'narration/ending.wav'
-  ];
-  const fileList = files.map(f => `file '${f}'`).join('\n');
+  const fileList = texts.map(t => `file '${t.file}'`).join('\n');
   fs.writeFileSync('narration/list.txt', fileList);
   execSync('ffmpeg -f concat -safe 0 -i narration/list.txt -c copy narration/combined.wav');
 
-  console.log(`✅ ${games.length}試合分のナレーションを生成・結合しました`);
+  console.log(`✅ ${games.length}試合分のナレーション生成完了`);
 }
 
 main().catch(e => {
