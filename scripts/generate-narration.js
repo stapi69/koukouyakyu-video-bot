@@ -1,116 +1,64 @@
 const fs = require('fs');
-const http = require('http');
 const { execSync } = require('child_process');
 
 const game = JSON.parse(fs.readFileSync('game.json', 'utf-8'));
 const games = game.games || [game];
 const date = game.date || '';
-const SPEAKER = 3; // ずんだもん
 
-// CPU版VoiceVoxは非常に遅いため長めのタイムアウトを設定
-const QUERY_TIMEOUT_MS = 60000;   // 60秒
-const SYNTH_TIMEOUT_MS = 300000;  // 5分（CPU合成は非常に遅い）
+fs.mkdirSync('narration', { recursive: true });
 
-async function generateVoice(text, filename) {
-  console.log(`生成中 [${filename}]: "${text.slice(0, 30)}..."`);
+// gTTSで音声生成するPythonスクリプトを実行
+const texts = [
+  { text: `${date}の高校野球、試合結果ダイジェストです。`, file: 'narration/opening' },
+  ...games.map((g, i) => {
+    const winner = g.scoreA > g.scoreB ? g.teamA : g.teamB;
+    return {
+      text: `${g.tournament}。${g.teamA} ${g.scoreA}対${g.scoreB} ${g.teamB}。${winner}が勝利しました。`,
+      file: `narration/game${i}`
+    };
+  }),
+  { text: '本日も熱戦をお届けしました。チャンネル登録よろしくお願いします。', file: 'narration/ending' }
+];
 
-  // Step 1: audio_query
-  const queryData = await new Promise((resolve, reject) => {
-    const path = `/audio_query?text=${encodeURIComponent(text)}&speaker=${SPEAKER}`;
-    const req = http.request(
-      { hostname: 'localhost', port: 50021, path, method: 'POST' },
-      res => {
-        const chunks = [];
-        res.on('data', c => chunks.push(c));
-        res.on('end', () => {
-          const raw = Buffer.concat(chunks).toString();
-          try {
-            const parsed = JSON.parse(raw);
-            if (parsed.detail) reject(new Error('audio_query error: ' + parsed.detail));
-            else resolve(parsed);
-          } catch (e) {
-            reject(new Error('audio_query parse error: ' + e.message + ' | raw: ' + raw.slice(0, 100)));
-          }
-        });
-      }
-    );
-    req.on('error', e => reject(new Error('audio_query network error: ' + e.message)));
-    const timer = setTimeout(() => {
-      req.destroy();
-      reject(new Error(`audio_query timeout (${QUERY_TIMEOUT_MS}ms)`));
-    }, QUERY_TIMEOUT_MS);
-    req.on('close', () => clearTimeout(timer));
-    req.end();
-  });
+// Pythonスクリプトを生成
+const pyScript = `
+from gtts import gTTS
+import sys
 
-  console.log(`  audio_query OK → synthesis開始 (CPU版は時間がかかります)`);
+texts = ${JSON.stringify(texts.map(t => ({ text: t.text, file: t.file })))}
 
-  // Step 2: synthesis（CPU版は非常に遅い）
-  const body = JSON.stringify(queryData);
-  const audioData = await new Promise((resolve, reject) => {
-    const req = http.request(
-      {
-        hostname: 'localhost',
-        port: 50021,
-        path: `/synthesis?speaker=${SPEAKER}`,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body)
-        }
-      },
-      res => {
-        const chunks = [];
-        res.on('data', c => chunks.push(c));
-        res.on('end', () => resolve(Buffer.concat(chunks)));
-      }
-    );
-    req.on('error', e => reject(new Error('synthesis network error: ' + e.message)));
-    const timer = setTimeout(() => {
-      req.destroy();
-      reject(new Error(`synthesis timeout (${SYNTH_TIMEOUT_MS}ms) - CPU版が遅すぎる可能性`));
-    }, SYNTH_TIMEOUT_MS);
-    req.on('close', () => clearTimeout(timer));
-    req.write(body);
-    req.end();
-  });
+for item in texts:
+    print(f"生成中: {item['text'][:30]}...")
+    tts = gTTS(text=item['text'], lang='ja', slow=False)
+    mp3_file = item['file'] + '.mp3'
+    tts.save(mp3_file)
+    print(f"  -> {mp3_file}")
 
-  if (audioData.length < 100) {
-    throw new Error(`synthesis結果が小さすぎます: ${audioData.length} bytes`);
-  }
+print("全音声生成完了")
+`;
 
-  fs.writeFileSync(filename, audioData);
-  console.log(`  ✅ ${filename}: ${audioData.length} bytes`);
-}
+fs.writeFileSync('/tmp/gtts_script.py', pyScript);
 
-async function main() {
-  console.log('VoiceVoxナレーション生成開始');
-  fs.mkdirSync('narration', { recursive: true });
-
-  const texts = [
-    { text: `${date}の高校野球、試合結果ダイジェストです。`, file: 'narration/opening.wav' },
-    ...games.map((g, i) => {
-      const winner = g.scoreA > g.scoreB ? g.teamA : g.teamB;
-      return {
-        text: `${g.tournament}、${g.teamA} ${g.scoreA}対${g.scoreB} ${g.teamB}。${winner}が勝利しました。`,
-        file: `narration/game${i}.wav`
-      };
-    }),
-    { text: '本日も熱戦をお届けしました。チャンネル登録よろしくお願いします！', file: 'narration/ending.wav' }
-  ];
-
-  for (const { text, file } of texts) {
-    await generateVoice(text, file);
-  }
-
-  const fileList = texts.map(t => `file '${t.file}'`).join('\n');
-  fs.writeFileSync('narration/list.txt', fileList);
-  execSync('ffmpeg -f concat -safe 0 -i narration/list.txt -c copy narration/combined.wav');
-
-  console.log(`✅ ${games.length}試合分のナレーション生成完了`);
-}
-
-main().catch(e => {
-  console.error('❌ ナレーション生成失敗:', e.message);
+try {
+  execSync('python3 /tmp/gtts_script.py', { stdio: 'inherit' });
+} catch (e) {
+  console.error('gTTS生成エラー:', e.message);
   process.exit(1);
-});
+}
+
+// mp3→wavに変換してから結合
+const files = texts.map(t => t.file);
+const wavFiles = [];
+
+for (const f of files) {
+  const mp3 = f + '.mp3';
+  const wav = f + '.wav';
+  execSync(`ffmpeg -y -i "${mp3}" -ar 22050 -ac 1 "${wav}"`, { stdio: 'pipe' });
+  wavFiles.push(wav);
+}
+
+const fileList = wavFiles.map(f => `file '${f}'`).join('\n');
+fs.writeFileSync('narration/list.txt', fileList);
+execSync('ffmpeg -f concat -safe 0 -i narration/list.txt -c copy narration/combined.wav');
+
+console.log(`✅ ${games.length}試合分のナレーション生成完了（gTTS使用）`);
