@@ -29,17 +29,14 @@ on:
 jobs:
   refresh-token:
     runs-on: ubuntu-latest
-    outputs:
-      token_updated: ${{ steps.exchange.outputs.token_updated }}
     steps:
       - name: Refresh Token交換・Secrets更新
-        id: exchange
         env:
+          GH_TOKEN: ${{ secrets.PERSONAL_GH_TOKEN }}
           YT_AUTH_CODE: ${{ secrets.YT_AUTH_CODE }}
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET_FOR_GHA: ${{ secrets.YT_CLIENT_SECRET_FOR_GHA }}
           YT_REDIRECT_URI: ${{ secrets.YT_REDIRECT_URI }}
-          PERSONAL_GH_TOKEN: ${{ secrets.PERSONAL_GH_TOKEN }}
         run: |
           RESP=$(curl -s -X POST https://oauth2.googleapis.com/token \
             -d "code=${YT_AUTH_CODE}" \
@@ -47,33 +44,16 @@ jobs:
             -d "client_secret=${YT_CLIENT_SECRET_FOR_GHA}" \
             -d "redirect_uri=${YT_REDIRECT_URI}" \
             -d "grant_type=authorization_code")
-          echo "Exchange result:"
-          echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print({k:v for k,v in d.items() if k != 'access_token'})"
-          REFRESH=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); rt=d.get('refresh_token',''); print(rt)" 2>/dev/null)
+          echo "Exchange response (partial):"
+          echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print({k:(v[:20]+'...' if isinstance(v,str) and len(v)>20 else v) for k,v in d.items()})" 2>/dev/null || echo "$RESP" | head -c 200
+          REFRESH=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('refresh_token',''))" 2>/dev/null)
           if [ -z "$REFRESH" ]; then
-            echo "Failed to get refresh token"
-            echo "token_updated=false" >> $GITHUB_OUTPUT
+            echo "ERROR: No refresh token - auth code may be expired"
             exit 1
           fi
           echo "::add-mask::$REFRESH"
-          pip install PyNaCl --break-system-packages -q
-          export RT_VALUE="$REFRESH"
-          export GH_PAT="$PERSONAL_GH_TOKEN"
-          python3 /dev/stdin << 'PYEOF'
-import requests, base64, os
-from nacl import encoding, public as nacl_public
-RT = os.environ['RT_VALUE']
-GH = os.environ['GH_PAT']
-REPO = "stapi69/koukouyakyu-video-bot"
-headers = {"Authorization": f"token {GH}", "Accept": "application/vnd.github.v3+json"}
-pk = requests.get(f"https://api.github.com/repos/{REPO}/actions/secrets/public-key", headers=headers).json()
-box = nacl_public.SealedBox(nacl_public.PublicKey(pk["key"].encode(), encoding.Base64Encoder()))
-encrypted = base64.b64encode(box.encrypt(RT.encode())).decode()
-r = requests.put(f"https://api.github.com/repos/{REPO}/actions/secrets/YOUTUBE_REFRESH_TOKEN",
-    headers=headers, json={"encrypted_value": encrypted, "key_id": pk["key_id"]})
-print("Secret updated:", r.status_code)
-PYEOF
-          echo "token_updated=true" >> $GITHUB_OUTPUT
+          echo "$REFRESH" | gh secret set YOUTUBE_REFRESH_TOKEN --repo stapi69/koukouyakyu-video-bot
+          echo "Refresh Token updated successfully!"
 
   build-video:
     needs: refresh-token
