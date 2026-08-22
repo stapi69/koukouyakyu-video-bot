@@ -6,70 +6,70 @@ const game = JSON.parse(fs.readFileSync('game.json', 'utf-8'));
 const games = game.games || [game];
 const date = game.date || '';
 const SPEAKER = 3; // ずんだもん
-
-function httpPost(url, data) {
-  return new Promise((resolve, reject) => {
-    const urlObj = new URL(url);
-    const body = JSON.stringify(data);
-    const options = {
-      hostname: urlObj.hostname,
-      port: urlObj.port || 50021,
-      path: urlObj.pathname + urlObj.search,
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
-    };
-    const req = http.request(options, res => {
-      const chunks = [];
-      res.on('data', chunk => chunks.push(chunk));
-      res.on('end', () => resolve(Buffer.concat(chunks)));
-    });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
-}
-
-function httpPostBinary(url, data) {
-  return new Promise((resolve, reject) => {
-    const urlObj = new URL(url);
-    const body = JSON.stringify(data);
-    const options = {
-      hostname: urlObj.hostname,
-      port: urlObj.port || 50021,
-      path: urlObj.pathname + urlObj.search,
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
-    };
-    const req = http.request(options, res => {
-      const chunks = [];
-      res.on('data', chunk => chunks.push(chunk));
-      res.on('end', () => resolve(Buffer.concat(chunks)));
-    });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
-}
+const VOICEVOX_BASE = 'http://localhost:50021';
 
 async function generateVoice(text, filename) {
-  const base = `http://localhost:50021`;
-  const queryRes = await new Promise((resolve, reject) => {
+  console.log(`生成中: ${text.slice(0, 20)}... → ${filename}`);
+
+  // Step 1: audio_query
+  const queryData = await new Promise((resolve, reject) => {
     const path = `/audio_query?text=${encodeURIComponent(text)}&speaker=${SPEAKER}`;
-    const options = { hostname: 'localhost', port: 50021, path, method: 'POST' };
-    const req = http.request(options, res => {
-      const chunks = [];
-      res.on('data', c => chunks.push(c));
-      res.on('end', () => resolve(JSON.parse(Buffer.concat(chunks).toString())));
-    });
+    const req = http.request(
+      { hostname: 'localhost', port: 50021, path, method: 'POST' },
+      res => {
+        const chunks = [];
+        res.on('data', c => chunks.push(c));
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(Buffer.concat(chunks).toString());
+            if (parsed.detail) {
+              reject(new Error('audio_query error: ' + parsed.detail));
+            } else {
+              resolve(parsed);
+            }
+          } catch (e) {
+            reject(new Error('audio_query JSON parse error: ' + e.message));
+          }
+        });
+      }
+    );
     req.on('error', reject);
+    req.setTimeout(10000, () => reject(new Error('audio_query timeout')));
     req.end();
   });
 
-  const audioRes = await httpPostBinary(
-    `http://localhost:50021/synthesis?speaker=${SPEAKER}`,
-    queryRes
-  );
-  fs.writeFileSync(filename, audioRes);
+  // Step 2: synthesis
+  const body = JSON.stringify(queryData);
+  const audioData = await new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        hostname: 'localhost',
+        port: 50021,
+        path: `/synthesis?speaker=${SPEAKER}`,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body)
+        }
+      },
+      res => {
+        const chunks = [];
+        res.on('data', c => chunks.push(c));
+        res.on('end', () => resolve(Buffer.concat(chunks)));
+      }
+    );
+    req.on('error', reject);
+    req.setTimeout(30000, () => reject(new Error('synthesis timeout')));
+    req.write(body);
+    req.end();
+  });
+
+  if (audioData.length < 100) {
+    throw new Error(`synthesis returned too small data: ${audioData.length} bytes`);
+  }
+
+  fs.writeFileSync(filename, audioData);
+  console.log(`  ✅ 生成完了: ${audioData.length} bytes`);
 }
 
 async function main() {
@@ -98,4 +98,7 @@ async function main() {
   console.log(`✅ ${games.length}試合分のナレーションを生成・結合しました`);
 }
 
-main().catch(console.error);
+main().catch(e => {
+  console.error('❌ ナレーション生成失敗:', e.message);
+  process.exit(1);
+});
