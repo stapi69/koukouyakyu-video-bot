@@ -82,6 +82,19 @@ jobs:
           done
           curl -s http://localhost:50021/version && echo "Version OK" || echo "Version NG"
 
+      - name: VoiceVox synthesis診断
+        run: |
+          echo "## VoiceVox診断" >> $GITHUB_STEP_SUMMARY
+          AQ_RESP=$(curl -s -X POST "http://localhost:50021/audio_query?text=%E3%83%86%E3%82%B9%E3%83%88&speaker=3")
+          AQ_SIZE=${#AQ_RESP}
+          echo "audio_query response: ${AQ_SIZE} bytes" >> $GITHUB_STEP_SUMMARY
+          echo "${AQ_RESP:0:100}" >> $GITHUB_STEP_SUMMARY
+          echo "$AQ_RESP" > /tmp/aq_test.json
+          echo "### synthesis test" >> $GITHUB_STEP_SUMMARY
+          SYN_SIZE=$(curl -s -X POST "http://localhost:50021/synthesis?speaker=3" -H "Content-Type: application/json" -d @/tmp/aq_test.json | wc -c)
+          echo "synthesis size: $SYN_SIZE bytes" >> $GITHUB_STEP_SUMMARY
+          echo "synthesis_size=$SYN_SIZE"
+
       - name: ナレーション音声を生成
         continue-on-error: true
         run: |
@@ -138,3 +151,4 @@ jobs:
           name: koshien-short
           path: output_final.mp4
           retention-days: 7
+
