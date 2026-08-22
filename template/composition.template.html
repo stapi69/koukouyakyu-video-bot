@@ -42,27 +42,33 @@
       letter-spacing: 4px; margin-bottom: 60px;
     }
     .matchup {
-      width: 100%;
+      width: 90%;
       display: flex; align-items: center; justify-content: center;
-      gap: 40px;
+      gap: 30px;
     }
     .team-block {
       display: flex; flex-direction: column;
-      align-items: center; gap: 20px;
+      align-items: center; gap: 0; flex: 1;
     }
     .team-name {
-      font-size: 64px; font-weight: 900;
+      font-size: 56px; font-weight: 900;
       color: #ffffff; text-align: center;
       line-height: 1.2;
+      min-height: 180px;
+      display: flex; align-items: center; justify-content: center;
     }
     .score {
       font-size: 160px; font-weight: 900;
       color: #FFD700;
       text-shadow: 0 0 40px rgba(255,215,0,0.6);
+      line-height: 1;
     }
     .vs-label {
       font-size: 56px; color: #88ccaa;
       font-weight: 700;
+      flex-shrink: 0;
+      align-self: flex-end;
+      padding-bottom: 20px;
     }
     .win-badge {
       font-size: 32px; background: #FFD700;
