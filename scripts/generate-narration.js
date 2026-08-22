@@ -7,7 +7,6 @@ const date = game.date || '';
 
 fs.mkdirSync('narration', { recursive: true });
 
-// gTTSで音声生成するPythonスクリプトを実行
 const texts = [
   { text: `${date}の高校野球、試合結果ダイジェストです。`, file: 'narration/opening' },
   ...games.map((g, i) => {
@@ -20,45 +19,22 @@ const texts = [
   { text: '本日も熱戦をお届けしました。チャンネル登録よろしくお願いします。', file: 'narration/ending' }
 ];
 
-// Pythonスクリプトを生成
-const pyScript = `
-from gtts import gTTS
-import sys
-
-texts = ${JSON.stringify(texts.map(t => ({ text: t.text, file: t.file })))}
-
-for item in texts:
-    print(f"生成中: {item['text'][:30]}...")
-    tts = gTTS(text=item['text'], lang='ja', slow=False)
-    mp3_file = item['file'] + '.mp3'
-    tts.save(mp3_file)
-    print(f"  -> {mp3_file}")
-
-print("全音声生成完了")
-`;
-
-fs.writeFileSync('/tmp/gtts_script.py', pyScript);
-
-try {
-  execSync('python3 /tmp/gtts_script.py', { stdio: 'inherit' });
-} catch (e) {
-  console.error('gTTS生成エラー:', e.message);
-  process.exit(1);
+// edge-ttsで音声生成
+for (const { text, file } of texts) {
+  console.log(`生成中: ${text.slice(0, 30)}...`);
+  const escapedText = text.replace(/"/g, '\\"');
+  execSync(
+    `edge-tts --voice ja-JP-NanamiNeural --text "${escapedText}" --write-media "${file}.mp3"`,
+    { stdio: 'pipe' }
+  );
+  // mp3→wav変換
+  execSync(`ffmpeg -y -i "${file}.mp3" -ar 22050 -ac 1 "${file}.wav"`, { stdio: 'pipe' });
+  console.log(`  ✅ ${file}.wav`);
 }
 
-// mp3→wavに変換してから結合
-const files = texts.map(t => t.file);
-const wavFiles = [];
-
-for (const f of files) {
-  const mp3 = f + '.mp3';
-  const wav = f + '.wav';
-  execSync(`ffmpeg -y -i "${mp3}" -ar 22050 -ac 1 "${wav}"`, { stdio: 'pipe' });
-  wavFiles.push(wav);
-}
-
+// 結合
+const wavFiles = texts.map(t => t.file + '.wav');
 const fileList = wavFiles.map(f => `file '${f}'`).join('\n');
 fs.writeFileSync('narration/list.txt', fileList);
 execSync('ffmpeg -f concat -safe 0 -i narration/list.txt -c copy narration/combined.wav');
-
-console.log(`✅ ${games.length}試合分のナレーション生成完了（gTTS使用）`);
+console.log(`✅ ${games.length}試合分のナレーション生成完了（edge-tts）`);
