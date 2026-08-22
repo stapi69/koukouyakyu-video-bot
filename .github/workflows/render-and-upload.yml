@@ -27,61 +27,39 @@ on:
         default: "選手権テスト大会"
 
 jobs:
-  refresh-token:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Refresh Token交換・Secrets更新
-        env:
-          GH_TOKEN: ${{ secrets.PERSONAL_GH_TOKEN }}
-          YT_AUTH_CODE: ${{ secrets.YT_AUTH_CODE }}
-          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
-          YT_CLIENT_SECRET_FOR_GHA: ${{ secrets.YT_CLIENT_SECRET_FOR_GHA }}
-          YT_REDIRECT_URI: ${{ secrets.YT_REDIRECT_URI }}
-        run: |
-          RESP=$(curl -s -X POST https://oauth2.googleapis.com/token \
-            -d "code=${YT_AUTH_CODE}" \
-            -d "client_id=${YT_CLIENT_ID}" \
-            -d "client_secret=${YT_CLIENT_SECRET_FOR_GHA}" \
-            -d "redirect_uri=${YT_REDIRECT_URI}" \
-            -d "grant_type=authorization_code")
-          echo "Exchange response (partial):"
-          echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print({k:(v[:20]+'...' if isinstance(v,str) and len(v)>20 else v) for k,v in d.items()})" 2>/dev/null || echo "$RESP" | head -c 200
-          REFRESH=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('refresh_token',''))" 2>/dev/null)
-          if [ -z "$REFRESH" ]; then
-            echo "ERROR: No refresh token - auth code may be expired"
-            exit 1
-          fi
-          echo "::add-mask::$REFRESH"
-          echo "$REFRESH" | gh secret set YOUTUBE_REFRESH_TOKEN --repo stapi69/koukouyakyu-video-bot
-          echo "Refresh Token updated successfully!"
-
   build-video:
-    needs: refresh-token
     runs-on: ubuntu-latest
+
     services:
       voicevox:
         image: voicevox/voicevox_engine:cpu-latest
         ports:
           - 50021:50021
+
     steps:
       - name: リポジトリを取得
         uses: actions/checkout@v4
+
       - name: Node.jsセットアップ
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+
       - name: FFmpeg・日本語フォントをインストール
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg fonts-noto-cjk
+
       - name: 依存パッケージをインストール
         run: npm install
+
       - name: Puppeteerの依存ライブラリをインストール
         run: |
           sudo apt-get install -y \
             libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
             libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
             libxfixes3 libxrandr2 libgbm1 libasound2t64
+
       - name: game.jsonを生成
         run: |
           if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
@@ -89,28 +67,61 @@ jobs:
           else
             echo '{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}","games":[{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}"}],"date":"${{ inputs.tournament }}"}' > game.json
           fi
+
       - name: ナレーション音声を生成
         run: |
           timeout 30 bash -c 'until curl -s http://localhost:50021/version; do sleep 2; done'
           node scripts/generate-narration.js
+
       - name: コンポジションHTMLを生成
         run: node scripts/build-composition.js
+
       - name: Puppeteerで動画レンダリング
         run: node scripts/render-video.js
+
       - name: BGMをミックス
         run: node scripts/mix-audio.js
+
       - name: output_final.mp4を確実に生成
         run: |
+          ls -la output*.mp4 2>/dev/null || echo "no mp4"
           if [ ! -f output_final.mp4 ] && [ -f output.mp4 ]; then
             cp output.mp4 output_final.mp4
+            echo "Copied output.mp4 to output_final.mp4"
           fi
           test -f output_final.mp4 || (echo "FATAL: no output_final.mp4" && exit 1)
+          ls -la output_final.mp4
+
+      - name: YouTube OAuth トークン確認
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: |
+          echo "=== TOKEN CHECK ==="
+          HTTP_CODE=$(curl -s -o /tmp/tok.json -w "%{http_code}" -X POST https://oauth2.googleapis.com/token \
+            -d client_id="${YOUTUBE_CLIENT_ID}" \
+            -d client_secret="${YOUTUBE_CLIENT_SECRET}" \
+            -d refresh_token="${YOUTUBE_REFRESH_TOKEN}" \
+            -d grant_type=refresh_token)
+          echo "HTTP: $HTTP_CODE"
+          cat /tmp/tok.json | head -c 300
+          echo ""
+          echo "HTTP_CODE: $HTTP_CODE" >> $GITHUB_STEP_SUMMARY
+          cat /tmp/tok.json >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "TOKEN INVALID (HTTP $HTTP_CODE)" && exit 1
+          fi
+          echo "TOKEN OK"
+
       - name: YouTube Shortsにアップロード
         env:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
         run: node scripts/upload-youtube.js
+
       - name: 動画をArtifactとして保存
         uses: actions/upload-artifact@v4
         with:
