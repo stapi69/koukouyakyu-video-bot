@@ -63,18 +63,6 @@ jobs:
             echo '{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}","games":[{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}"}],"date":"${{ inputs.tournament }}"}' > game.json
           fi
 
-      - name: TTS診断
-        run: |
-          echo "=== espeak-ng テスト ==="
-          which espeak-ng && espeak-ng --version || echo "espeak-ng not found"
-          echo "=== 日本語ボイス確認 ==="
-          espeak-ng --voices=ja 2>&1 | head -5 || echo "No ja voices"
-          echo "=== 簡単な日本語テスト ==="
-          echo "テスト" | espeak-ng -v ja --ipa -q 2>&1 | head -3 || echo "ja IPA failed"
-          espeak-ng -v ja -s 130 "テスト" -w /tmp/esp_test.wav 2>&1 && ls -la /tmp/esp_test.wav || echo "espeak ja FAILED"
-          echo "=== pico2wave テスト ==="
-          which pico2wave 2>/dev/null || echo "pico2wave not found"
-
       - name: ナレーション音声を生成（espeak-ng）
         run: node scripts/generate-narration.js
 
