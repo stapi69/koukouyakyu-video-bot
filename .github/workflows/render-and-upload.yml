@@ -30,12 +30,6 @@ jobs:
   build-video:
     runs-on: ubuntu-latest
 
-    services:
-      voicevox:
-        image: voicevox/voicevox_engine:cpu-latest
-        ports:
-          - 50021:50021
-
     steps:
       - name: リポジトリを取得
         uses: actions/checkout@v4
@@ -45,10 +39,11 @@ jobs:
         with:
           node-version: "22"
 
-      - name: FFmpeg・日本語フォントをインストール
+      - name: FFmpeg・日本語フォント・gTTSをインストール
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg fonts-noto-cjk
+          pip install gtts --break-system-packages
 
       - name: 依存パッケージをインストール
         run: npm install
@@ -68,40 +63,8 @@ jobs:
             echo '{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}","games":[{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}"}],"date":"${{ inputs.tournament }}"}' > game.json
           fi
 
-      - name: VoiceVox完全起動待機
-        run: |
-          echo "VoiceVox audio_query レベルでの起動確認（最大180秒）"
-          for i in $(seq 1 36); do
-            RESP=$(curl -s -X POST "http://localhost:50021/audio_query?text=%E3%83%86%E3%82%B9%E3%83%88&speaker=3" 2>/dev/null)
-            if echo "$RESP" | grep -q "accent_phrases"; then
-              echo "VoiceVox起動完了! (${i}回目 / $((i*5))秒)"
-              break
-            fi
-            echo "待機中... (${i}/36回, $((i*5))秒経過)"
-            sleep 5
-          done
-          curl -s http://localhost:50021/version && echo "Version OK" || echo "Version NG"
-
-      - name: VoiceVox synthesis診断
-        run: |
-          echo "## VoiceVox診断" >> $GITHUB_STEP_SUMMARY
-          AQ_RESP=$(curl -s -X POST "http://localhost:50021/audio_query?text=%E3%83%86%E3%82%B9%E3%83%88&speaker=3")
-          AQ_SIZE=${#AQ_RESP}
-          echo "audio_query response: ${AQ_SIZE} bytes" >> $GITHUB_STEP_SUMMARY
-          echo "${AQ_RESP:0:100}" >> $GITHUB_STEP_SUMMARY
-          echo "$AQ_RESP" > /tmp/aq_test.json
-          echo "### synthesis test" >> $GITHUB_STEP_SUMMARY
-          SYN_SIZE=$(curl -s -X POST "http://localhost:50021/synthesis?speaker=3" -H "Content-Type: application/json" -d @/tmp/aq_test.json | wc -c)
-          echo "synthesis size: $SYN_SIZE bytes" >> $GITHUB_STEP_SUMMARY
-          echo "synthesis_size=$SYN_SIZE"
-
-      - name: ナレーション音声を生成
-        continue-on-error: true
-        run: |
-          node scripts/generate-narration.js
-          echo "=== narrationファイル確認 ==="
-          ls -la narration/ 2>/dev/null || echo "narrationディレクトリなし"
-          test -f narration/combined.wav && echo "combined.wav 生成済み" || echo "combined.wav なし（BGMのみになります）"
+      - name: ナレーション音声を生成（gTTS）
+        run: node scripts/generate-narration.js
 
       - name: コンポジションHTMLを生成
         run: node scripts/build-composition.js
@@ -131,10 +94,8 @@ jobs:
             -d client_secret="${YOUTUBE_CLIENT_SECRET}" \
             -d refresh_token="${YOUTUBE_REFRESH_TOKEN}" \
             -d grant_type=refresh_token)
-          echo "HTTP: $HTTP_CODE"
           if [ "$HTTP_CODE" != "200" ]; then
-            cat /tmp/tok.json
-            echo "TOKEN INVALID" && exit 1
+            cat /tmp/tok.json && exit 1
           fi
           echo "TOKEN OK"
 
@@ -151,4 +112,3 @@ jobs:
           name: koshien-short
           path: output_final.mp4
           retention-days: 7
-
