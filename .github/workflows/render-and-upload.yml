@@ -69,9 +69,15 @@ jobs:
           fi
 
       - name: ナレーション音声を生成
+        continue-on-error: true
         run: |
-          timeout 60 bash -c 'until curl -s http://localhost:50021/version > /dev/null 2>&1; do sleep 2; echo "VOICEVOX waiting..."; done' && echo "VOICEVOX ready!"
-          node scripts/generate-narration.js
+          echo "=== VoiceVox起動待機(最大120秒) ==="
+          timeout 120 bash -c 'until curl -s http://localhost:50021/version > /dev/null 2>&1; do sleep 3; echo "waiting..."; done' && echo "VoiceVox ready!" || echo "VoiceVox timeout - narration skipped"
+          if curl -s http://localhost:50021/version > /dev/null 2>&1; then
+            node scripts/generate-narration.js && echo "narration_ok=true" || echo "narration failed"
+          else
+            echo "VoiceVox not available - skipping narration"
+          fi
 
       - name: コンポジションHTMLを生成
         run: node scripts/build-composition.js
@@ -123,3 +129,4 @@ jobs:
           name: koshien-short
           path: output_final.mp4
           retention-days: 7
+
