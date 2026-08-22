@@ -1,0 +1,125 @@
+name: Render and Upload Koshien Short
+
+on:
+  repository_dispatch:
+    types: [new-game, new-games-digest]
+  workflow_dispatch:
+    inputs:
+      teamA:
+        description: "チームA"
+        required: true
+        default: "サンプル高校"
+      scoreA:
+        description: "スコアA"
+        required: true
+        default: "5"
+      teamB:
+        description: "チームB"
+        required: true
+        default: "テスト高校"
+      scoreB:
+        description: "スコアB"
+        required: true
+        default: "3"
+      tournament:
+        description: "大会名"
+        required: true
+        default: "選手権テスト大会"
+
+jobs:
+  build-video:
+    runs-on: ubuntu-latest
+
+    services:
+      voicevox:
+        image: voicevox/voicevox_engine:cpu-latest
+        ports:
+          - 50021:50021
+
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@v4
+
+      - name: Node.jsセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: FFmpeg・日本語フォントをインストール
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+
+      - name: 依存パッケージをインストール
+        run: npm install
+
+      - name: Puppeteerの依存ライブラリをインストール
+        run: |
+          sudo apt-get install -y \
+            libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+            libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
+            libxfixes3 libxrandr2 libgbm1 libasound2t64
+
+      - name: game.jsonを生成
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo '${{ toJSON(github.event.client_payload) }}' > game.json
+          else
+            echo '{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}","games":[{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}"}],"date":"${{ inputs.tournament }}"}' > game.json
+          fi
+
+      - name: ナレーション音声を生成
+        run: |
+          timeout 60 bash -c 'until curl -s http://localhost:50021/version > /dev/null 2>&1; do sleep 2; echo "VOICEVOX waiting..."; done' && echo "VOICEVOX ready!"
+          node scripts/generate-narration.js
+
+      - name: コンポジションHTMLを生成
+        run: node scripts/build-composition.js
+
+      - name: Puppeteerで動画レンダリング
+        run: node scripts/render-video.js
+
+      - name: BGMをミックス
+        run: node scripts/mix-audio.js
+
+      - name: output_final.mp4を確実に生成
+        run: |
+          if [ ! -f output_final.mp4 ] && [ -f output.mp4 ]; then
+            cp output.mp4 output_final.mp4
+            echo "Copied output.mp4 to output_final.mp4 (no audio)"
+          fi
+          test -f output_final.mp4 || (echo "FATAL: no output_final.mp4" && exit 1)
+          ls -la output_final.mp4
+
+      - name: YouTube OAuth トークン確認
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: |
+          HTTP_CODE=$(curl -s -o /tmp/tok.json -w "%{http_code}" -X POST https://oauth2.googleapis.com/token \
+            -d client_id="${YOUTUBE_CLIENT_ID}" \
+            -d client_secret="${YOUTUBE_CLIENT_SECRET}" \
+            -d refresh_token="${YOUTUBE_REFRESH_TOKEN}" \
+            -d grant_type=refresh_token)
+          echo "HTTP: $HTTP_CODE"
+          cat /tmp/tok.json | head -c 300
+          echo ""
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "TOKEN INVALID (HTTP $HTTP_CODE)" && exit 1
+          fi
+          echo "TOKEN OK"
+
+      - name: YouTube Shortsにアップロード
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: node scripts/upload-youtube.js
+
+      - name: 動画をArtifactとして保存
+        uses: actions/upload-artifact@v4
+        with:
+          name: koshien-short
+          path: output_final.mp4
+          retention-days: 7
