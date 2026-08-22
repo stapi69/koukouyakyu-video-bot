@@ -19,16 +19,15 @@ const texts = [
   { text: '本日も熱戦をお届けしました。チャンネル登録よろしくお願いします。', file: 'narration/ending' }
 ];
 
-// edge-ttsで音声生成
+// espeak-ngで音声生成（オフライン、日本語対応）
 for (const { text, file } of texts) {
   console.log(`生成中: ${text.slice(0, 30)}...`);
-  const escapedText = text.replace(/"/g, '\\"');
+  // テキストをファイルに書き出してから読み込む（特殊文字対策）
+  fs.writeFileSync('/tmp/tts_input.txt', text, 'utf-8');
   execSync(
-    `edge-tts --voice ja-JP-NanamiNeural --text "${escapedText}" --write-media "${file}.mp3"`,
-    { stdio: 'pipe' }
+    `espeak-ng -v ja -s 130 -p 55 -f /tmp/tts_input.txt -w "${file}.wav"`,
+    { stdio: 'inherit' }
   );
-  // mp3→wav変換
-  execSync(`ffmpeg -y -i "${file}.mp3" -ar 22050 -ac 1 "${file}.wav"`, { stdio: 'pipe' });
   console.log(`  ✅ ${file}.wav`);
 }
 
@@ -37,4 +36,4 @@ const wavFiles = texts.map(t => t.file + '.wav');
 const fileList = wavFiles.map(f => `file '${f}'`).join('\n');
 fs.writeFileSync('narration/list.txt', fileList);
 execSync('ffmpeg -f concat -safe 0 -i narration/list.txt -c copy narration/combined.wav');
-console.log(`✅ ${games.length}試合分のナレーション生成完了（edge-tts）`);
+console.log(`✅ ${games.length}試合分のナレーション生成完了（espeak-ng）`);
