@@ -63,17 +63,17 @@ jobs:
             echo '{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}","games":[{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}"}],"date":"${{ inputs.tournament }}"}' > game.json
           fi
 
-      - name: VoiceVox起動待機
+      - name: VoiceVox起動待機（audio_queryのみ・synthesisなし）
         run: |
           for i in $(seq 1 48); do
             AQ=$(curl -s -X POST "http://localhost:50021/audio_query?text=test&speaker=3" 2>/dev/null)
             if echo "$AQ" | grep -q "accent_phrases"; then
-              SZ=$(echo "$AQ" | curl -s -X POST "http://localhost:50021/synthesis?speaker=3" \
-                -H "Content-Type: application/json" -d @- 2>/dev/null | wc -c)
-              [ "$SZ" -gt 1000 ] && echo "VoiceVox ready! (${i})" && break
+              echo "VoiceVox audio_query OK! (${i})"
+              break
             fi
             sleep 5
           done
+          sleep 10
 
       - name: ナレーション音声を生成
         continue-on-error: true
@@ -122,3 +122,4 @@ jobs:
           name: koshien-short
           path: output_final.mp4
           retention-days: 7
+
