@@ -30,6 +30,12 @@ jobs:
   build-video:
     runs-on: ubuntu-latest
 
+    services:
+      voicevox:
+        image: voicevox/voicevox_engine:cpu-latest
+        ports:
+          - 50021:50021
+
     steps:
       - name: リポジトリを取得
         uses: actions/checkout@v4
@@ -42,7 +48,7 @@ jobs:
       - name: 依存関係をインストール
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-noto-cjk espeak-ng
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
           npm install
           sudo apt-get install -y \
             libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
@@ -57,9 +63,21 @@ jobs:
             echo '{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}","games":[{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}"}],"date":"${{ inputs.tournament }}"}' > game.json
           fi
 
+      - name: VoiceVox起動待機（accent_phrasesが返るまで）
+        run: |
+          echo "VoiceVox起動待機中（最大180秒）..."
+          for i in $(seq 1 36); do
+            RESP=$(curl -s -X POST "http://localhost:50021/audio_query?text=test&speaker=3" 2>/dev/null)
+            if echo "$RESP" | grep -q "accent_phrases"; then
+              echo "✅ VoiceVox ready! (${i}回目, $((i*5))秒)"
+              break
+            fi
+            echo "  待機中... ($((i*5))秒)"
+            sleep 5
+          done
+
       - name: ナレーション音声を生成
-        continue-on-error: true
-        run: python3 scripts/generate_narration.py
+        run: node scripts/generate-narration.js
 
       - name: コンポジションHTMLを生成
         run: node scripts/build-composition.js
