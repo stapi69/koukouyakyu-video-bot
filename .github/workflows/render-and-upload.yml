@@ -30,12 +30,6 @@ jobs:
   build-video:
     runs-on: ubuntu-latest
 
-    services:
-      voicevox:
-        image: voicevox/voicevox_engine:cpu-ubuntu20.04-x86_64-1.0.4
-        ports:
-          - 50021:50021
-
     steps:
       - name: リポジトリを取得
         uses: actions/checkout@v4
@@ -49,7 +43,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg fonts-noto-cjk
-          pip install pykakasi --break-system-packages -q
           npm install
           sudo apt-get install -y \
             libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
@@ -63,66 +56,6 @@ jobs:
           else
             echo '{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}","games":[{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}"}],"date":"${{ inputs.tournament }}"}' > game.json
           fi
-
-      - name: VoiceVox起動待機＋カナテスト
-        run: |
-          for i in $(seq 1 48); do
-            AQ=$(curl -s -X POST "http://localhost:50021/audio_query?text=test&speaker=3" 2>/dev/null)
-            if echo "$AQ" | grep -q "accent_phrases"; then
-              SZ=$(echo "$AQ" | curl -s -X POST "http://localhost:50021/synthesis?speaker=3" \
-                -H "Content-Type: application/json" -d @- 2>/dev/null | wc -c)
-              if [ "$SZ" -gt 1000 ]; then
-                echo "VoiceVox ready! (${i})"
-                echo "=== カタカナテスト ==="
-                AQ2=$(curl -s -X POST "http://localhost:50021/audio_query?text=%E3%82%AA%E3%82%AA%E3%82%B5%E3%82%AB%E3%83%88%E3%82%A6%E3%82%A4%E3%83%B3&speaker=3" 2>/dev/null)
-                echo "katakana_AQ_len=${#AQ2}"
-                SZ2=$(echo "$AQ2" | curl -s -X POST "http://localhost:50021/synthesis?speaker=3" -H "Content-Type: application/json" -d @- 2>/dev/null | wc -c)
-                echo "katakana_syn_size=${SZ2}"
-                break
-              fi
-            fi
-            sleep 5
-          done
-
-      - name: カナ変換テキスト生成（Python）
-        run: python3 scripts/generate_narration.py
-
-      - name: VoiceVoxで音声合成（bash curl）
-        continue-on-error: true
-        run: |
-          COUNT=$(cat /tmp/vv_texts/count.txt 2>/dev/null || echo 0)
-          echo "音声合成: ${COUNT}件"
-          WAVS=""
-          for i in $(seq 0 $((COUNT-1))); do
-            IDX=$(printf '%02d' $i)
-            KANA=$(cat /tmp/vv_texts/${IDX}_kana.txt 2>/dev/null || echo "")
-            WAV=$(cat /tmp/vv_texts/${IDX}_wav.txt 2>/dev/null || echo "narration/${IDX}.wav")
-            DUR=$(cat /tmp/vv_texts/${IDX}_dur.txt 2>/dev/null || echo "3")
-            echo "[${WAV}] ${KANA:0:40}"
-            ENC=$(python3 -c "from urllib.parse import quote; import sys; print(quote(sys.stdin.read().strip(),safe=''))" <<< "$KANA")
-            AQ=$(curl -s --max-time 60 -X POST "http://localhost:50021/audio_query?text=${ENC}&speaker=3" 2>/dev/null)
-            AQ_LEN=${#AQ}
-            echo "  AQ_len=$AQ_LEN"
-            if echo "$AQ" | grep -q "accent_phrases"; then
-              echo "$AQ" | curl -s --max-time 600 -X POST "http://localhost:50021/synthesis?speaker=3" \
-                -H "Content-Type: application/json" -d @- -o "$WAV" 2>/dev/null
-              SZ=$(wc -c < "$WAV" 2>/dev/null || echo 0)
-              echo "  synthesis_size=$SZ"
-              if [ "$SZ" -gt 1000 ]; then
-                echo "  ✅ 成功"
-                WAVS="$WAVS $WAV"
-                continue
-              fi
-            fi
-            echo "  → 無音フォールバック"
-            ffmpeg -y -f lavfi -i anullsrc=r=24000:cl=mono -t "$DUR" "$WAV" -loglevel quiet 2>/dev/null
-            WAVS="$WAVS $WAV"
-          done
-          echo "結合中..."
-          ls narration/*.wav 2>/dev/null | sort | while read -r f; do echo "file '$f'"; done > narration/list.txt
-          ffmpeg -f concat -safe 0 -i narration/list.txt -c copy narration/combined.wav -y -loglevel quiet 2>/dev/null || \
-            ffmpeg -y -f lavfi -i anullsrc=r=24000:cl=mono -t 10 narration/combined.wav -loglevel quiet 2>/dev/null
-          echo "combined.wav: $(wc -c < narration/combined.wav 2>/dev/null || echo 0) bytes"
 
       - name: コンポジションHTMLを生成
         run: node scripts/build-composition.js
@@ -167,5 +100,3 @@ jobs:
           name: koshien-short
           path: output_final.mp4
           retention-days: 7
-
-
