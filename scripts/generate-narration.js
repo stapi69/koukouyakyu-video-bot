@@ -13,7 +13,7 @@ function vvApi(path, bodyJson) {
   return new Promise((resolve, reject) => {
     const body = bodyJson ? JSON.stringify(bodyJson) : null;
     const req = http.request({
-      hostname: 'localhost', port: 50021, path, method: 'POST',
+      hostname: '127.0.0.1', port: 50021, path, method: 'POST',
       headers: body ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } : {}
     }, res => {
       const chunks = [];
