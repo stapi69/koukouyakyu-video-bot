@@ -32,7 +32,7 @@ jobs:
 
     services:
       voicevox:
-        image: voicevox/voicevox_engine:0.25.2-cpu
+        image: voicevox/voicevox_engine:cpu-ubuntu22.04-0.25.2
         ports:
           - 50021:50021
 
@@ -151,3 +151,4 @@ jobs:
           name: koshien-short
           path: output_final.mp4
           retention-days: 7
+
