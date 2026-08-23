@@ -63,14 +63,18 @@ jobs:
             echo '{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}","games":[{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}"}],"date":"${{ inputs.tournament }}"}' > game.json
           fi
 
-      - name: VoiceVox起動待機（accent_phrasesが返るまで）
+      - name: VoiceVox起動待機（synthesis成功まで）
         run: |
-          echo "VoiceVox起動待機中（最大180秒）..."
-          for i in $(seq 1 36); do
-            RESP=$(curl -s -X POST "http://localhost:50021/audio_query?text=test&speaker=3" 2>/dev/null)
-            if echo "$RESP" | grep -q "accent_phrases"; then
-              echo "✅ VoiceVox ready! (${i}回目, $((i*5))秒)"
-              break
+          echo "VoiceVox起動待機中（synthesis成功確認、最大240秒）..."
+          for i in $(seq 1 48); do
+            AQ=$(curl -s -X POST "http://localhost:50021/audio_query?text=%E3%83%86%E3%82%B9%E3%83%88&speaker=3" 2>/dev/null)
+            if echo "$AQ" | grep -q "accent_phrases"; then
+              SYN_SIZE=$(echo "$AQ" | curl -s -X POST "http://localhost:50021/synthesis?speaker=3"                 -H "Content-Type: application/json" -d @- 2>/dev/null | wc -c)
+              echo "  synthesis size: $SYN_SIZE bytes"
+              if [ "$SYN_SIZE" -gt 1000 ]; then
+                echo "✅ VoiceVox synthesis ready! (${i}回目, $((i*5))秒)"
+                break
+              fi
             fi
             echo "  待機中... ($((i*5))秒)"
             sleep 5
@@ -122,3 +126,4 @@ jobs:
           name: koshien-short
           path: output_final.mp4
           retention-days: 7
+
