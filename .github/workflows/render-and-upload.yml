@@ -81,6 +81,7 @@ jobs:
           done
 
       - name: ナレーション音声を生成
+        continue-on-error: true
         run: node scripts/generate-narration.js
 
       - name: コンポジションHTMLを生成
@@ -126,4 +127,5 @@ jobs:
           name: koshien-short
           path: output_final.mp4
           retention-days: 7
+
 
