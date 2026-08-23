@@ -1,71 +1,46 @@
-const fs = require('fs');
+const { execSync, execFileSync } = require('child_process');
 const http = require('http');
-const { execSync } = require('child_process');
 
-const game = JSON.parse(fs.readFileSync('game.json', 'utf-8'));
-const games = game.games || [game];
-const date = game.date || '';
-const SPEAKER = 3;
+console.log('=== Node.js VoiceVox診断 ===');
 
-function pad2(n) { return String(n).padStart(2, '0'); }
+// 1. curlコマンドでVoiceVoxにアクセス
+try {
+  const v = execSync('curl -s http://127.0.0.1:50021/version', {encoding: 'utf-8', timeout: 5000});
+  console.log('curl 127.0.0.1 version:', v.trim().slice(0, 50));
+} catch(e) {
+  console.log('curl FAILED:', e.message.slice(0, 100));
+}
 
-function vvApi(path, bodyJson) {
-  return new Promise((resolve, reject) => {
-    const body = bodyJson ? JSON.stringify(bodyJson) : null;
-    const req = http.request({
-      hostname: '127.0.0.1', port: 50021, path, method: 'POST',
-      headers: body ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } : {}
-    }, res => {
-      const chunks = [];
-      res.on('data', c => chunks.push(c));
-      res.on('end', () => {
-        const buf = Buffer.concat(chunks);
-        const ct = res.headers['content-type'] || '';
-        if (ct.includes('json')) {
-          try {
-            const obj = JSON.parse(buf.toString());
-            if (obj.detail) return reject(new Error('API error: ' + obj.detail));
-            resolve(obj);
-          } catch (e) { reject(new Error('parse: ' + buf.toString().slice(0, 100))); }
-        } else {
-          if (buf.length < 100) return reject(new Error('small: ' + buf.length + ' ct=' + ct));
-          resolve(buf);
-        }
+// 2. Node.js http でアクセス
+const req = http.request({
+  hostname: '127.0.0.1', port: 50021, path: '/version', method: 'GET'
+}, res => {
+  const chunks = [];
+  res.on('data', c => chunks.push(c));
+  res.on('end', () => {
+    console.log('http.request version:', Buffer.concat(chunks).toString().slice(0, 50));
+    
+    // 3. audio_query
+    const aqReq = http.request({
+      hostname: '127.0.0.1', port: 50021,
+      path: '/audio_query?text=%E3%83%86%E3%82%B9%E3%83%88&speaker=3',
+      method: 'POST'
+    }, aqRes => {
+      const ac = [];
+      aqRes.on('data', c => ac.push(c));
+      aqRes.on('end', () => {
+        const body = Buffer.concat(ac).toString();
+        console.log('audio_query len:', body.length, 'status:', aqRes.statusCode);
+        console.log('accent_phrases:', body.includes('accent_phrases') ? 'YES' : 'NO');
+        process.exit(0);
       });
     });
-    req.on('error', reject);
-    if (body) req.write(body);
-    req.end();
+    aqReq.on('error', e => { console.log('audio_query error:', e.message); process.exit(1); });
+    aqReq.end();
   });
-}
-
-async function synth(text, file) {
-  console.log('生成:', text.slice(0, 40));
-  const q = await vvApi('/audio_query?text=' + encodeURIComponent(text) + '&speaker=' + SPEAKER, null);
-  const wav = await vvApi('/synthesis?speaker=' + SPEAKER, q);
-  fs.writeFileSync(file, wav);
-  console.log(' ✅', file, wav.length, 'bytes');
-}
-
-async function main() {
-  fs.mkdirSync('narration', { recursive: true });
-  const items = [
-    { t: date + 'の高校野球、試合結果です。', f: 'narration/00_open.wav' }
-  ];
-  games.forEach(function(g, i) {
-    const w = g.scoreA > g.scoreB ? g.teamA : g.teamB;
-    items.push({ t: g.teamA + '対' + g.teamB + '、' + w + 'が勝利。', f: 'narration/' + pad2(i+1) + '_game.wav' });
-  });
-  items.push({ t: 'チャンネル登録よろしくお願いします。', f: 'narration/99_end.wav' });
-
-  for (let i = 0; i < items.length; i++) {
-    await synth(items[i].t, items[i].f);
-  }
-
-  const list = items.map(function(x) { return "file '" + x.f + "'"; }).join('\n');
-  fs.writeFileSync('narration/list.txt', list);
-  execSync('ffmpeg -f concat -safe 0 -i narration/list.txt -c copy narration/combined.wav -y');
-  console.log('✅ combined.wav 完成');
-}
-
-main().catch(function(e) { console.error('❌', e.message); process.exit(1); });
+});
+req.on('error', e => {
+  console.log('http.request FAILED:', e.message);
+  process.exit(1);
+});
+req.end();
