@@ -32,7 +32,7 @@ jobs:
 
     services:
       voicevox:
-        image: voicevox/voicevox_engine:0.21.3-cpu
+        image: voicevox/voicevox_engine:cpu-latest
         ports:
           - 50021:50021
 
@@ -66,7 +66,7 @@ jobs:
       - name: VoiceVox起動待機
         run: |
           for i in $(seq 1 48); do
-            AQ=$(curl -s -X POST "http://localhost:50021/audio_query?text=test&speaker=3" 2>/dev/null)
+            AQ=$(curl -s -X POST "http://localhost:50021/audio_query?text=%E3%83%86%E3%82%B9%E3%83%88&speaker=3" 2>/dev/null)
             if echo "$AQ" | grep -q "accent_phrases"; then
               SZ=$(echo "$AQ" | curl -s -X POST "http://localhost:50021/synthesis?speaker=3" \
                 -H "Content-Type: application/json" -d @- 2>/dev/null | wc -c)
