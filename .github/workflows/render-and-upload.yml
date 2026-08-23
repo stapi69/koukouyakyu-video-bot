@@ -39,10 +39,11 @@ jobs:
         with:
           node-version: "22"
 
-      - name: FFmpeg・日本語フォント・espeak-ngをインストール
+      - name: FFmpeg・TTS依存関係をインストール
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg fonts-noto-cjk espeak-ng
+          pip install gtts edge-tts --break-system-packages
 
       - name: 依存パッケージをインストール
         run: npm install
@@ -62,82 +63,126 @@ jobs:
             echo '{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}","games":[{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}"}],"date":"${{ inputs.tournament }}"}' > game.json
           fi
 
-      - name: ナレーション音声を生成（espeak-ng bash）
+      - name: ナレーション音声を生成
         run: |
           mkdir -p narration
-          
-          # game.jsonから情報を取得
-          DATE=$(python3 -c "import json; d=json.load(open('game.json')); print(d.get('date',''))")
-          GAMES_JSON=$(python3 -c "import json; d=json.load(open('game.json')); print(json.dumps(d.get('games',[])))")
-          
-          echo "=== espeak-ng バージョン確認 ==="
-          espeak-ng --version
-          
-          # オープニング
-          OPENING="${DATE}の高校野球、試合結果ダイジェストです。"
-          echo "$OPENING" > /tmp/text0.txt
-          espeak-ng -v ja -s 130 -f /tmp/text0.txt -w narration/opening.wav 2>&1 || \
-            ffmpeg -y -f lavfi -i anullsrc=r=22050:cl=mono -t 2 narration/opening.wav
-          echo "Opening: $(ls -la narration/opening.wav)"
-          
-          # 各試合
           python3 << 'PYEOF'
-          import json, subprocess, os
-          
+          import json, subprocess, os, sys, asyncio
+
           with open('game.json') as f:
               d = json.load(f)
-          
           games = d.get('games', [])
+          date = d.get('date', '')
+
+          texts = [
+              (f"{date}の高校野球、試合結果ダイジェストです。", 'narration/opening'),
+          ]
           for i, g in enumerate(games):
               winner = g['teamA'] if g['scoreA'] > g['scoreB'] else g['teamB']
-              text = f"{g['tournament']}。{g['teamA']} {g['scoreA']}対{g['scoreB']} {g['teamB']}。{winner}が勝利しました。"
-              with open(f'/tmp/text_game{i}.txt', 'w') as f:
+              t = f"{g['tournament']}。{g['teamA']} {g['scoreA']}対{g['scoreB']} {g['teamB']}。{winner}が勝利しました。"
+              texts.append((t, f'narration/game{i}'))
+          texts.append(('チャンネル登録よろしくお願いします。', 'narration/ending'))
+
+          def make_silent(filepath, duration=3):
+              subprocess.run(['ffmpeg', '-y', '-f', 'lavfi', '-i',
+                  f'anullsrc=r=22050:cl=mono', '-t', str(duration), filepath],
+                  capture_output=True)
+
+          def try_gtts(text, filepath):
+              try:
+                  from gtts import gTTS
+                  tts = gTTS(text=text, lang='ja', slow=False)
+                  mp3 = filepath + '.mp3'
+                  tts.save(mp3)
+                  size = os.path.getsize(mp3)
+                  if size < 1000:
+                      return False
+                  subprocess.run(['ffmpeg', '-y', '-i', mp3, '-ar', '22050', '-ac', '1', filepath],
+                      capture_output=True)
+                  return os.path.getsize(filepath) > 5000
+              except Exception as e:
+                  print(f"gTTS error: {e}")
+                  return False
+
+          async def try_edge_tts(text, filepath):
+              try:
+                  import edge_tts
+                  mp3 = filepath + '_edge.mp3'
+                  communicate = edge_tts.Communicate(text, "ja-JP-NanamiNeural")
+                  await communicate.save(mp3)
+                  size = os.path.getsize(mp3)
+                  if size < 1000:
+                      return False
+                  subprocess.run(['ffmpeg', '-y', '-i', mp3, '-ar', '22050', '-ac', '1', filepath],
+                      capture_output=True)
+                  return os.path.getsize(filepath) > 5000
+              except Exception as e:
+                  print(f"edge-tts error: {e}")
+                  return False
+
+          def try_espeak(text, filepath):
+              with open('/tmp/esp_text.txt', 'w', encoding='utf-8') as f:
                   f.write(text)
               result = subprocess.run(
-                  ['espeak-ng', '-v', 'ja', '-s', '130', '-f', f'/tmp/text_game{i}.txt', '-w', f'narration/game{i}.wav'],
+                  ['espeak-ng', '-v', 'ja', '-s', '130', '-f', '/tmp/esp_text.txt', '-w', filepath],
                   capture_output=True, text=True
               )
               if result.returncode != 0:
-                  print(f"espeak failed: {result.stderr}")
-                  subprocess.run(['ffmpeg', '-y', '-f', 'lavfi', '-i', 'anullsrc=r=22050:cl=mono', '-t', '3', f'narration/game{i}.wav'])
+                  return False
+              size = os.path.getsize(filepath) if os.path.exists(filepath) else 0
+              return size > 5000  # 5KB以上なら有効
+
+          success_count = 0
+          for text, outbase in texts:
+              outfile = outbase + '.wav'
+              print(f"生成中: {text[:30]}...")
+              ok = False
+
+              # 1. gTTS試行
+              if not ok:
+                  ok = try_gtts(text, outfile)
+                  if ok:
+                      print(f"  ✅ gTTS成功: {os.path.getsize(outfile)} bytes")
+
+              # 2. edge-tts試行
+              if not ok:
+                  try:
+                      ok = asyncio.run(try_edge_tts(text, outfile))
+                      if ok:
+                          print(f"  ✅ edge-tts成功: {os.path.getsize(outfile)} bytes")
+                  except Exception as e:
+                      print(f"  edge-tts: {e}")
+
+              # 3. espeak-ng試行
+              if not ok:
+                  ok = try_espeak(text, outfile)
+                  if ok:
+                      print(f"  ✅ espeak-ng成功: {os.path.getsize(outfile)} bytes")
+
+              # 4. フォールバック（無音）
+              if not ok:
+                  print(f"  ⚠️ 全TTS失敗 → 無音フォールバック")
+                  make_silent(outfile)
               else:
-                  print(f"game{i}.wav OK")
-          PYEOF
-          
-          # エンディング
-          echo "チャンネル登録よろしくお願いします。" > /tmp/text_end.txt
-          espeak-ng -v ja -s 130 -f /tmp/text_end.txt -w narration/ending.wav 2>&1 || \
-            ffmpeg -y -f lavfi -i anullsrc=r=22050:cl=mono -t 2 narration/ending.wav
-          
-          # ファイル確認
-          echo "=== 生成されたファイル ==="
-          ls -la narration/
-          
+                  success_count += 1
+
+          print(f"ナレーション成功: {success_count}/{len(texts)}")
+
           # 結合
-          GAME_COUNT=$(python3 -c "import json; print(len(json.load(open('game.json')).get('games', [])))")
-          python3 << 'PYEOF2'
-          import json, subprocess
-          
-          with open('game.json') as f:
-              d = json.load(f)
-          games = d.get('games', [])
-          
-          files = ['narration/opening.wav'] + [f'narration/game{i}.wav' for i in range(len(games))] + ['narration/ending.wav']
-          
-          # 存在するファイルのみ
-          files = [f for f in files if __import__('os').path.exists(f)]
-          
+          files = [t[1] + '.wav' for t in texts if os.path.exists(t[1] + '.wav')]
           with open('narration/list.txt', 'w') as f:
               f.write('\n'.join([f"file '{fn}'" for fn in files]))
-          
-          result = subprocess.run(['ffmpeg', '-f', 'concat', '-safe', '0', '-i', 'narration/list.txt', '-c', 'copy', 'narration/combined.wav', '-y'], capture_output=True)
+
+          result = subprocess.run(
+              ['ffmpeg', '-f', 'concat', '-safe', '0', '-i', 'narration/list.txt', '-c', 'copy', 'narration/combined.wav', '-y'],
+              capture_output=True
+          )
           if result.returncode == 0:
-              print(f"✅ narration/combined.wav 生成完了")
+              size = os.path.getsize('narration/combined.wav')
+              print(f"✅ combined.wav: {size} bytes (success={success_count})")
           else:
-              print(f"結合失敗: {result.stderr.decode()}")
-          PYEOF2
-          
-          ls -la narration/combined.wav 2>/dev/null && echo "combined.wav OK" || echo "combined.wav なし"
+              print(f"❌ 結合失敗: {result.stderr.decode()}")
+          PYEOF
 
       - name: コンポジションHTMLを生成
         run: node scripts/build-composition.js
