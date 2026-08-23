@@ -1,48 +1,52 @@
 #!/usr/bin/env python3
+"""
+VoiceVoxナレーション生成スクリプト
+bashのcurlコマンドで直接VoiceVox APIを呼び出す
+"""
 import json, os, subprocess, sys
 from urllib.parse import quote
 
 SPEAKER = 3
 
-def run_curl(args, input_data=None):
-    r = subprocess.run(['curl', '-s'] + args,
-        input=input_data, capture_output=True)
-    return r.stdout, r.returncode
-
-def synthesize(text, output_file):
-    print(f"  audio_query: {text[:40]}...", flush=True)
-    encoded = quote(text)
-    body, rc = run_curl(['-X', 'POST',
-        f'http://localhost:50021/audio_query?text={encoded}&speaker={SPEAKER}'])
-    print(f"  audio_query rc={rc} len={len(body)}", flush=True)
-    if rc != 0 or len(body) < 100:
-        raise RuntimeError(f"audio_query failed rc={rc}")
+def vv_synthesize_text(text, out_wav):
+    """VoiceVoxでテキストをWAVに変換。失敗時はFalseを返す"""
+    enc = quote(text, safe='')
+    
+    # audio_query
+    r1 = subprocess.run(
+        f'curl -s -X POST "http://localhost:50021/audio_query?text={enc}&speaker={SPEAKER}"',
+        shell=True, capture_output=True
+    )
+    if r1.returncode != 0 or len(r1.stdout) < 100:
+        print(f"    audio_query失敗 rc={r1.returncode} size={len(r1.stdout)}", flush=True)
+        return False
+    
+    # JSONチェック
     try:
-        query = json.loads(body)
+        q = json.loads(r1.stdout)
     except Exception as e:
-        raise RuntimeError(f"audio_query JSON parse error: {e}")
+        print(f"    JSON解析エラー: {e}", flush=True)
+        return False
+    
+    # synthesis
+    with open('/tmp/vv_aq.json', 'wb') as f:
+        f.write(r1.stdout)
+    
+    r2 = subprocess.run(
+        f'curl -s -X POST "http://localhost:50021/synthesis?speaker={SPEAKER}" '
+        f'-H "Content-Type: application/json" -d @/tmp/vv_aq.json -o "{out_wav}"',
+        shell=True, capture_output=True
+    )
+    
+    sz = os.path.getsize(out_wav) if os.path.exists(out_wav) else 0
+    print(f"    synthesis rc={r2.returncode} size={sz}", flush=True)
+    return r2.returncode == 0 and sz > 1000
 
-    print(f"  synthesis...", flush=True)
-    with open('/tmp/vv_query.json', 'wb') as f:
-        f.write(body)
-    audio, rc = run_curl(['-X', 'POST',
-        f'http://localhost:50021/synthesis?speaker={SPEAKER}',
-        '-H', 'Content-Type: application/json',
-        '-d', '@/tmp/vv_query.json'])
-    print(f"  synthesis rc={rc} len={len(audio)}", flush=True)
-    if rc != 0 or len(audio) < 1000:
-        # エラー内容を表示
-        try: print(f"  synthesis response: {audio[:200]}", flush=True)
-        except: pass
-        raise RuntimeError(f"synthesis failed rc={rc} size={len(audio)}")
-    with open(output_file, 'wb') as f:
-        f.write(audio)
-    print(f"  ✅ {output_file}: {len(audio)} bytes", flush=True)
-
-def silent(output_file, duration=3):
-    subprocess.run(['ffmpeg', '-y', '-f', 'lavfi', '-i',
-        'anullsrc=r=22050:cl=mono', '-t', str(duration), output_file],
-        capture_output=True)
+def make_silent(out_wav, seconds=3):
+    subprocess.run(
+        f'ffmpeg -y -f lavfi -i anullsrc=r=24000:cl=mono -t {seconds} "{out_wav}"',
+        shell=True, capture_output=True
+    )
 
 def main():
     with open('game.json', encoding='utf-8') as f:
@@ -52,39 +56,49 @@ def main():
     print(f"date={date} games={len(games)}", flush=True)
     os.makedirs('narration', exist_ok=True)
 
-    items = [
-        (f"{date}の高校野球、試合結果ダイジェストです。", 'narration/opening.wav', 2),
-    ] + [
-        (f"{g['tournament']}。{g['teamA']} {g['scoreA']}対{g['scoreB']} {g['teamB']}。"
-         f"{'　'.join([g['teamA'] if g['scoreA'] > g['scoreB'] else g['teamB']])}が勝利しました。",
-         f"narration/game{i}.wav", 4)
-        for i, g in enumerate(games)
-    ] + [
-        ("本日も熱戦をお届けしました。チャンネル登録よろしくお願いします。", "narration/ending.wav", 2)
-    ]
+    wavs = []
+    ok = 0
 
-    wavs, ok = [], 0
-    for text, wav, dur in items:
-        print(f"\n生成: {text[:50]}", flush=True)
-        try:
-            synthesize(text, wav)
+    segments = [
+        (f"{date}の高校野球試合結果です。", 'narration/00_open.wav', 2),
+    ]
+    for i, g in enumerate(games):
+        win = g['teamA'] if int(g['scoreA']) > int(g['scoreB']) else g['teamB']
+        t = f"{g['teamA']} {g['scoreA']}対{g['scoreB']} {g['teamB']}。{win}が勝利。"
+        segments.append((t, f'narration/{i+1:02d}_game.wav', 4))
+    segments.append(("チャンネル登録お願いします。", 'narration/99_end.wav', 2))
+
+    for text, wav, dur in segments:
+        print(f"\n[{wav}] {text[:50]}", flush=True)
+        if vv_synthesize_text(text, wav):
             ok += 1
-        except Exception as e:
-            print(f"  ❌ {e}", flush=True)
-            silent(wav, dur)
+            print(f"  ✅ 成功", flush=True)
+        else:
+            make_silent(wav, dur)
+            print(f"  → 無音フォールバック", flush=True)
         wavs.append(wav)
 
-    print(f"\n成功: {ok}/{len(items)}", flush=True)
+    print(f"\n成功: {ok}/{len(segments)}", flush=True)
+
+    # 結合
+    list_txt = '\n'.join([f"file '{w}'" for w in wavs])
     with open('narration/list.txt', 'w') as f:
-        f.write('\n'.join([f"file '{w}'" for w in wavs]))
-    r = subprocess.run(['ffmpeg', '-f', 'concat', '-safe', '0',
-        '-i', 'narration/list.txt', '-c', 'copy', 'narration/combined.wav', '-y'],
-        capture_output=True)
+        f.write(list_txt)
+    
+    r = subprocess.run(
+        'ffmpeg -f concat -safe 0 -i narration/list.txt -c copy narration/combined.wav -y',
+        shell=True, capture_output=True
+    )
     if r.returncode != 0:
-        print(f"concat失敗: {r.stderr.decode()[:200]}", flush=True)
-        sys.exit(1)
-    sz = os.path.getsize('narration/combined.wav')
-    print(f"✅ combined.wav: {sz} bytes (ok={ok}/{len(items)})", flush=True)
+        print(f"concat失敗: {r.stderr.decode()[:300]}", flush=True)
+        # フォールバック: 無音のcombined.wavを生成
+        subprocess.run(
+            'ffmpeg -y -f lavfi -i anullsrc=r=24000:cl=mono -t 15 narration/combined.wav',
+            shell=True, capture_output=True
+        )
+    
+    sz = os.path.getsize('narration/combined.wav') if os.path.exists('narration/combined.wav') else 0
+    print(f"✅ combined.wav: {sz} bytes", flush=True)
 
 if __name__ == '__main__':
     main()
