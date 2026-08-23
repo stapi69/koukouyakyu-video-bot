@@ -75,9 +75,65 @@ jobs:
             sleep 5
           done
 
-      - name: ナレーション音声を生成
+      - name: ナレーション音声を生成（bash直接）
         continue-on-error: true
-        run: python3 scripts/generate_narration.py
+        run: |
+          mkdir -p narration
+
+          # VoiceVox合成関数（起動確認と同じcurlを使用）
+          vv_synth() {
+            local TEXT="$1" OUT="$2" DUR="${3:-3}"
+            # URLエンコード
+            local ENC
+            ENC=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read().strip(),safe=''))" <<< "$TEXT")
+            # audio_query
+            local AQ
+            AQ=$(curl -s --max-time 60 -X POST "http://localhost:50021/audio_query?text=${ENC}&speaker=3" 2>/dev/null)
+            echo "  [${OUT}] AQ_len=${#AQ}"
+            if echo "$AQ" | grep -q "accent_phrases"; then
+              # synthesis
+              echo "$AQ" | curl -s --max-time 300 -X POST "http://localhost:50021/synthesis?speaker=3" \
+                -H "Content-Type: application/json" -d @- -o "$OUT" 2>/dev/null
+              local SZ
+              SZ=$(wc -c < "$OUT" 2>/dev/null || echo 0)
+              echo "  synthesis_size=${SZ}"
+              [ "$SZ" -gt 1000 ] && echo "  ✅ OK" && return 0
+            fi
+            echo "  → 無音フォールバック"
+            ffmpeg -y -f lavfi -i anullsrc=r=24000:cl=mono -t "$DUR" "$OUT" -loglevel quiet 2>/dev/null
+            return 1
+          }
+
+          # game.jsonからテキスト生成
+          DATE=$(python3 -c "import json; print(json.load(open('game.json'))['date'])")
+          vv_synth "${DATE}の高校野球試合結果です" narration/00_open.wav 2
+
+          # 各試合をファイルに書き出してから処理
+          python3 -c "
+import json
+with open('game.json') as f:
+    d = json.load(f)
+for i, g in enumerate(d['games']):
+    win = g['teamA'] if g['scoreA'] > g['scoreB'] else g['teamB']
+    text = f\"{g['teamA']} {g['scoreA']}対{g['scoreB']} {g['teamB']}。{win}が勝利。\"
+    open(f'/tmp/gt{i}.txt', 'w').write(text)
+    print(i)
+" | while read -r IDX; do
+            TEXT=$(cat "/tmp/gt${IDX}.txt")
+            NUM=$(printf '%02d' $((IDX + 1)))
+            vv_synth "$TEXT" "narration/${NUM}_game.wav" 4
+          done
+
+          vv_synth "チャンネル登録お願いします" narration/99_end.wav 2
+
+          # 結合
+          ls narration/*.wav 2>/dev/null | sort | while read -r f; do
+            echo "file '$f'"
+          done > narration/list.txt
+          cat narration/list.txt
+          ffmpeg -f concat -safe 0 -i narration/list.txt -c copy narration/combined.wav -y -loglevel quiet 2>/dev/null || \
+            ffmpeg -y -f lavfi -i anullsrc=r=24000:cl=mono -t 15 narration/combined.wav -loglevel quiet 2>/dev/null
+          echo "combined.wav: $(wc -c < narration/combined.wav 2>/dev/null || echo 0) bytes"
 
       - name: コンポジションHTMLを生成
         run: node scripts/build-composition.js
