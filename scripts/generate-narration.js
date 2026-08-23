@@ -5,86 +5,90 @@ const { execSync } = require('child_process');
 const game = JSON.parse(fs.readFileSync('game.json', 'utf-8'));
 const games = game.games || [game];
 const date = game.date || '';
-const SPEAKER = 3; // ずんだもん
+const SPEAKER = 3;
 
-function voicevoxPost(path, bodyObj) {
+function log(msg) {
+  console.log(msg);
+  fs.appendFileSync('/tmp/narration_log.txt', msg + '\n');
+}
+
+function synthesize(text) {
   return new Promise((resolve, reject) => {
-    const body = bodyObj ? JSON.stringify(bodyObj) : '';
-    const opts = {
-      hostname: 'localhost',
-      port: 50021,
-      path: path,
-      method: 'POST',
-      headers: bodyObj
-        ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
-        : {}
-    };
-    const req = http.request(opts, res => {
+    // Step1: audio_query
+    const qPath = `/audio_query?text=${encodeURIComponent(text)}&speaker=${SPEAKER}`;
+    const qReq = http.request({ hostname:'localhost',port:50021,path:qPath,method:'POST' }, res => {
       const chunks = [];
       res.on('data', c => chunks.push(c));
       res.on('end', () => {
-        const buf = Buffer.concat(chunks);
-        // Content-Typeがapplication/jsonならパース
-        const ct = res.headers['content-type'] || '';
-        if (ct.includes('application/json')) {
-          try { resolve(JSON.parse(buf.toString())); }
-          catch (e) { reject(new Error('JSON parse error: ' + buf.toString().slice(0, 100))); }
-        } else {
-          resolve(buf); // バイナリ（wav）
-        }
+        const raw = Buffer.concat(chunks).toString();
+        log(`  audio_query status=${res.statusCode} len=${raw.length}`);
+        let query;
+        try { query = JSON.parse(raw); } 
+        catch(e) { return reject(new Error('audio_query parse: ' + raw.slice(0,100))); }
+        if (query.detail) return reject(new Error('audio_query detail: ' + query.detail));
+        
+        // Step2: synthesis
+        const body = JSON.stringify(query);
+        const sReq = http.request({
+          hostname:'localhost', port:50021,
+          path:`/synthesis?speaker=${SPEAKER}`, method:'POST',
+          headers:{ 'Content-Type':'application/json','Content-Length':Buffer.byteLength(body) }
+        }, sRes => {
+          const sc = [];
+          sRes.on('data', c => sc.push(c));
+          sRes.on('end', () => {
+            const audio = Buffer.concat(sc);
+            log(`  synthesis status=${sRes.statusCode} ct=${sRes.headers['content-type']} len=${audio.length}`);
+            if (audio.length < 100) return reject(new Error('synthesis too small: ' + audio.length));
+            resolve(audio);
+          });
+        });
+        sReq.on('error', e => reject(new Error('synthesis error: ' + e.message)));
+        sReq.write(body);
+        sReq.end();
       });
     });
-    req.on('error', reject);
-    if (bodyObj) req.write(body);
-    req.end();
+    qReq.on('error', e => reject(new Error('audio_query error: ' + e.message)));
+    qReq.end();
   });
-}
-
-async function generateVoice(text, filename) {
-  console.log(`生成中: ${text.slice(0, 30)}...`);
-  // audio_query
-  const query = await voicevoxPost(
-    `/audio_query?text=${encodeURIComponent(text)}&speaker=${SPEAKER}`, null
-  );
-  if (query.detail) throw new Error('audio_query error: ' + query.detail);
-  
-  // synthesis（タイムアウトなし - CPUでも完了まで待つ）
-  const audio = await voicevoxPost(
-    `/synthesis?speaker=${SPEAKER}`, query
-  );
-  if (!(audio instanceof Buffer) || audio.length < 100) {
-    throw new Error(`synthesis failed: ${audio.length || 0} bytes`);
-  }
-  fs.writeFileSync(filename, audio);
-  console.log(`  ✅ ${filename}: ${audio.length} bytes`);
 }
 
 async function main() {
   fs.mkdirSync('narration', { recursive: true });
+  fs.writeFileSync('/tmp/narration_log.txt', '=== narration log ===\n');
+  log(`date=${date} games=${games.length}`);
 
   const items = [
-    { text: `${date}の高校野球、試合結果ダイジェストです。`, file: 'narration/opening.wav' },
-    ...games.map((g, i) => {
-      const winner = g.scoreA > g.scoreB ? g.teamA : g.teamB;
-      return {
-        text: `${g.tournament}。${g.teamA} ${g.scoreA}対${g.scoreB} ${g.teamB}。${winner}が勝利しました。`,
-        file: `narration/game${i}.wav`
-      };
-    }),
-    { text: '本日も熱戦をお届けしました。チャンネル登録よろしくお願いします！', file: 'narration/ending.wav' }
+    { text: `${date}の高校野球、試合結果です。`, file: 'narration/opening.wav' },
+    ...games.map((g,i) => ({
+      text: `${g.teamA} ${g.scoreA}対${g.scoreB} ${g.teamB}`,
+      file: `narration/game${i}.wav`
+    })),
+    { text: 'チャンネル登録お願いします', file: 'narration/ending.wav' }
   ];
 
+  const wavs = [];
   for (const { text, file } of items) {
-    await generateVoice(text, file);
+    log(`\n生成: ${text}`);
+    try {
+      const audio = await synthesize(text);
+      fs.writeFileSync(file, audio);
+      log(`  ✅ ${file}: ${audio.length} bytes`);
+      wavs.push(file);
+    } catch(e) {
+      log(`  ❌ ERROR: ${e.message}`);
+      // 無音フォールバック
+      execSync(`ffmpeg -y -f lavfi -i anullsrc=r=22050:cl=mono -t 3 "${file}"`, {stdio:'pipe'});
+      log(`  → silent fallback`);
+      wavs.push(file);
+    }
   }
 
-  const fileList = items.map(i => `file '${i.file}'`).join('\n');
-  fs.writeFileSync('narration/list.txt', fileList);
-  execSync('ffmpeg -f concat -safe 0 -i narration/list.txt -c copy narration/combined.wav');
-  console.log(`✅ ${games.length}試合分 ナレーション完了`);
+  fs.writeFileSync('narration/list.txt', wavs.map(w=>`file '${w}'`).join('\n'));
+  execSync('ffmpeg -f concat -safe 0 -i narration/list.txt -c copy narration/combined.wav -y');
+  const sz = fs.statSync('narration/combined.wav').size;
+  log(`\ncombined.wav: ${sz} bytes`);
+  console.log(fs.readFileSync('/tmp/narration_log.txt','utf-8'));
 }
 
-main().catch(e => {
-  console.error('❌ ナレーション失敗:', e.message);
-  process.exit(1);
-});
+main().catch(e => { console.error('FATAL:', e.message); process.exit(1); });
