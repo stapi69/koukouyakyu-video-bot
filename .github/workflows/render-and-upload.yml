@@ -64,14 +64,22 @@ jobs:
             echo '{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}","games":[{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}"}],"date":"${{ inputs.tournament }}"}' > game.json
           fi
 
-      - name: VoiceVox起動待機
+      - name: VoiceVox起動待機＋診断
         run: |
           for i in $(seq 1 48); do
             AQ=$(curl -s -X POST "http://localhost:50021/audio_query?text=test&speaker=3" 2>/dev/null)
             if echo "$AQ" | grep -q "accent_phrases"; then
               SZ=$(echo "$AQ" | curl -s -X POST "http://localhost:50021/synthesis?speaker=3" \
                 -H "Content-Type: application/json" -d @- 2>/dev/null | wc -c)
-              [ "$SZ" -gt 1000 ] && echo "VoiceVox ready! (${i})" && break
+              if [ "$SZ" -gt 1000 ]; then
+                echo "test_synthesis_ok size=$SZ"
+                AQ2=$(curl -s -X POST "http://localhost:50021/audio_query?text=%E3%82%AA%E3%82%AA%E3%82%B5%E3%82%AB%E3%83%88%E3%82%A6%E3%82%A4%E3%83%B3&speaker=3" 2>/dev/null)
+                echo "kana_AQ_len=${#AQ2}"
+                SZ2=$(echo "$AQ2" | curl -s -X POST "http://localhost:50021/synthesis?speaker=3" \
+                  -H "Content-Type: application/json" -d @- 2>/dev/null | wc -c)
+                echo "kana_syn_size=$SZ2"
+                break
+              fi
             fi
             sleep 5
           done
@@ -151,4 +159,5 @@ jobs:
           name: koshien-short
           path: output_final.mp4
           retention-days: 7
+
 
