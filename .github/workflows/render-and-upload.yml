@@ -42,8 +42,7 @@ jobs:
       - name: FFmpeg・日本語フォント・espeak-ngをインストール
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-noto-cjk
-          sudo apt-get install -y espeak-ng
+          sudo apt-get install -y ffmpeg fonts-noto-cjk espeak-ng
 
       - name: 依存パッケージをインストール
         run: npm install
@@ -63,8 +62,82 @@ jobs:
             echo '{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}","games":[{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}"}],"date":"${{ inputs.tournament }}"}' > game.json
           fi
 
-      - name: ナレーション音声を生成（espeak-ng）
-        run: node scripts/generate-narration.js
+      - name: ナレーション音声を生成（espeak-ng bash）
+        run: |
+          mkdir -p narration
+          
+          # game.jsonから情報を取得
+          DATE=$(python3 -c "import json; d=json.load(open('game.json')); print(d.get('date',''))")
+          GAMES_JSON=$(python3 -c "import json; d=json.load(open('game.json')); print(json.dumps(d.get('games',[])))")
+          
+          echo "=== espeak-ng バージョン確認 ==="
+          espeak-ng --version
+          
+          # オープニング
+          OPENING="${DATE}の高校野球、試合結果ダイジェストです。"
+          echo "$OPENING" > /tmp/text0.txt
+          espeak-ng -v ja -s 130 -f /tmp/text0.txt -w narration/opening.wav 2>&1 || \
+            ffmpeg -y -f lavfi -i anullsrc=r=22050:cl=mono -t 2 narration/opening.wav
+          echo "Opening: $(ls -la narration/opening.wav)"
+          
+          # 各試合
+          python3 << 'PYEOF'
+          import json, subprocess, os
+          
+          with open('game.json') as f:
+              d = json.load(f)
+          
+          games = d.get('games', [])
+          for i, g in enumerate(games):
+              winner = g['teamA'] if g['scoreA'] > g['scoreB'] else g['teamB']
+              text = f"{g['tournament']}。{g['teamA']} {g['scoreA']}対{g['scoreB']} {g['teamB']}。{winner}が勝利しました。"
+              with open(f'/tmp/text_game{i}.txt', 'w') as f:
+                  f.write(text)
+              result = subprocess.run(
+                  ['espeak-ng', '-v', 'ja', '-s', '130', '-f', f'/tmp/text_game{i}.txt', '-w', f'narration/game{i}.wav'],
+                  capture_output=True, text=True
+              )
+              if result.returncode != 0:
+                  print(f"espeak failed: {result.stderr}")
+                  subprocess.run(['ffmpeg', '-y', '-f', 'lavfi', '-i', 'anullsrc=r=22050:cl=mono', '-t', '3', f'narration/game{i}.wav'])
+              else:
+                  print(f"game{i}.wav OK")
+          PYEOF
+          
+          # エンディング
+          echo "チャンネル登録よろしくお願いします。" > /tmp/text_end.txt
+          espeak-ng -v ja -s 130 -f /tmp/text_end.txt -w narration/ending.wav 2>&1 || \
+            ffmpeg -y -f lavfi -i anullsrc=r=22050:cl=mono -t 2 narration/ending.wav
+          
+          # ファイル確認
+          echo "=== 生成されたファイル ==="
+          ls -la narration/
+          
+          # 結合
+          GAME_COUNT=$(python3 -c "import json; print(len(json.load(open('game.json')).get('games', [])))")
+          python3 << 'PYEOF2'
+          import json, subprocess
+          
+          with open('game.json') as f:
+              d = json.load(f)
+          games = d.get('games', [])
+          
+          files = ['narration/opening.wav'] + [f'narration/game{i}.wav' for i in range(len(games))] + ['narration/ending.wav']
+          
+          # 存在するファイルのみ
+          files = [f for f in files if __import__('os').path.exists(f)]
+          
+          with open('narration/list.txt', 'w') as f:
+              f.write('\n'.join([f"file '{fn}'" for fn in files]))
+          
+          result = subprocess.run(['ffmpeg', '-f', 'concat', '-safe', '0', '-i', 'narration/list.txt', '-c', 'copy', 'narration/combined.wav', '-y'], capture_output=True)
+          if result.returncode == 0:
+              print(f"✅ narration/combined.wav 生成完了")
+          else:
+              print(f"結合失敗: {result.stderr.decode()}")
+          PYEOF2
+          
+          ls -la narration/combined.wav 2>/dev/null && echo "combined.wav OK" || echo "combined.wav なし"
 
       - name: コンポジションHTMLを生成
         run: node scripts/build-composition.js
@@ -112,6 +185,3 @@ jobs:
           name: koshien-short
           path: output_final.mp4
           retention-days: 7
-
-
-
