@@ -30,12 +30,6 @@ jobs:
   build-video:
     runs-on: ubuntu-latest
 
-    services:
-      voicevox:
-        image: voicevox/voicevox_engine:cpu-ubuntu22.04-0.25.2
-        ports:
-          - 50021:50021
-
     steps:
       - name: リポジトリを取得
         uses: actions/checkout@v4
@@ -45,11 +39,18 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Google Cloud認証
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: gcloudセットアップ
+        uses: google-github-actions/setup-gcloud@v2
+
       - name: 依存関係をインストール
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg fonts-noto-cjk
-          pip install pykakasi --break-system-packages -q
           npm install
           sudo apt-get install -y \
             libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
@@ -64,47 +65,9 @@ jobs:
             echo '{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}","games":[{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}"}],"date":"${{ inputs.tournament }}"}' > game.json
           fi
 
-      - name: VoiceVox起動待機（日本語synthesis確認）
-        run: |
-          JP_ENC="%E9%AB%98%E6%A0%A1%E9%87%8E%E7%90%83"
-          for i in $(seq 1 60); do
-            AQ=$(curl -s -X POST "http://localhost:50021/audio_query?text=${JP_ENC}&speaker=3" 2>/dev/null)
-            if echo "$AQ" | grep -q "accent_phrases"; then
-              SZ=$(echo "$AQ" | curl -s -X POST "http://localhost:50021/synthesis?speaker=3" \
-                -H "Content-Type: application/json" -d @- 2>/dev/null | wc -c)
-              echo "JP_synthesis_size=$SZ (try ${i})"
-              if [ "$SZ" -gt 1000 ]; then
-                echo "✅ VoiceVox JP synthesis OK!"
-                break
-              fi
-            fi
-            sleep 5
-          done
-
-      - name: ナレーション生成（bash直接）
+      - name: ナレーション音声を生成（Google Cloud TTS）
         continue-on-error: true
-        run: |
-          mkdir -p narration
-          python3 scripts/generate_narration.py
-          COUNT=$(cat /tmp/vv_texts/count.txt 2>/dev/null || echo 0)
-          for i in $(seq 0 $((COUNT-1))); do
-            IDX=$(printf '%02d' $i)
-            KANA=$(cat /tmp/vv_texts/${IDX}_kana.txt 2>/dev/null || echo "")
-            WAV=$(cat /tmp/vv_texts/${IDX}_wav.txt 2>/dev/null || echo "narration/${IDX}.wav")
-            DUR=$(cat /tmp/vv_texts/${IDX}_dur.txt 2>/dev/null || echo "3")
-            ENC=$(python3 -c "from urllib.parse import quote; import sys; print(quote(sys.stdin.read().strip(),safe=''))" <<< "$KANA")
-            AQ=$(curl -s --max-time 60 -X POST "http://localhost:50021/audio_query?text=${ENC}&speaker=3" 2>/dev/null)
-            if echo "$AQ" | grep -q "accent_phrases"; then
-              echo "$AQ" | curl -s --max-time 600 -X POST "http://localhost:50021/synthesis?speaker=3" \
-                -H "Content-Type: application/json" -d @- -o "$WAV" 2>/dev/null
-              SZ=$(wc -c < "$WAV" 2>/dev/null || echo 0)
-              [ "$SZ" -gt 1000 ] && echo "✅ ${IDX}: ${SZ}bytes" && continue
-            fi
-            ffmpeg -y -f lavfi -i anullsrc=r=24000:cl=mono -t "$DUR" "$WAV" -loglevel quiet 2>/dev/null
-          done
-          ls narration/*.wav 2>/dev/null | sort | while IFS= read -r f; do echo "file '$f'"; done > narration/list.txt
-          ffmpeg -f concat -safe 0 -i narration/list.txt -c copy narration/combined.wav -y -loglevel quiet 2>/dev/null || \
-            ffmpeg -y -f lavfi -i anullsrc=r=24000:cl=mono -t 10 narration/combined.wav -loglevel quiet 2>/dev/null
+        run: python3 scripts/generate_narration.py
 
       - name: コンポジションHTMLを生成
         run: node scripts/build-composition.js
