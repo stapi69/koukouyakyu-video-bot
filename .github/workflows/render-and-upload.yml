@@ -57,11 +57,6 @@ jobs:
             echo '{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}","games":[{"teamA":"${{ inputs.teamA }}","scoreA":${{ inputs.scoreA }},"teamB":"${{ inputs.teamB }}","scoreB":${{ inputs.scoreB }},"tournament":"${{ inputs.tournament }}"}],"date":"${{ inputs.tournament }}"}' > game.json
           fi
 
-      - name: ナレーション音声を生成（Google Cloud TTS）
-        env:
-          GCP_TTS_API_KEY: ${{ secrets.GCP_TTS_API_KEY }}
-        run: python3 scripts/generate_narration.py
-
       - name: コンポジションHTMLを生成
         run: node scripts/build-composition.js
 
