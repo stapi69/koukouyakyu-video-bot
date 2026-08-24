@@ -2,6 +2,7 @@
 """Google Cloud TTS（APIキー方式）でナレーション生成"""
 import json, os, subprocess, sys, base64, struct
 from urllib.request import urlopen, Request
+from urllib.error import HTTPError
 
 API_KEY = os.environ.get('GCP_TTS_API_KEY', '')
 TTS_URL = f'https://texttospeech.googleapis.com/v1/text:synthesize?key={API_KEY}'
@@ -24,8 +25,12 @@ def tts(text):
     }).encode('utf-8')
     req = Request(TTS_URL, data=payload,
                   headers={'Content-Type': 'application/json'})
-    with urlopen(req, timeout=30) as r:
-        result = json.loads(r.read())
+    try:
+        with urlopen(req, timeout=30) as r:
+            result = json.loads(r.read())
+    except HTTPError as e:
+        body = e.read().decode()
+        raise RuntimeError(f'HTTP {e.code}: {body[:200]}')
     pcm = base64.b64decode(result['audioContent'])
     return pcm_to_wav(pcm)
 
@@ -34,6 +39,7 @@ def silent(sec=3, rate=24000):
     return pcm_to_wav(pcm)
 
 def main():
+    print(f"API_KEY設定: {'あり('+API_KEY[:8]+'...)' if API_KEY else 'なし'}", flush=True)
     if not API_KEY:
         print('GCP_TTS_API_KEY が未設定です', flush=True)
         sys.exit(1)
@@ -61,7 +67,7 @@ def main():
         try:
             audio = tts(text)
             open(wav, 'wb').write(audio)
-            print(f"  ✅ {wav}: {len(audio)} bytes", flush=True)
+            print(f"  ✅ {len(audio)} bytes", flush=True)
             ok += 1
         except Exception as e:
             print(f"  ❌ {e}", flush=True)
@@ -69,6 +75,9 @@ def main():
         wavs.append(wav)
 
     print(f"\n成功: {ok}/{len(segs)}", flush=True)
+    if ok == 0:
+        print("全て失敗 → 無音で続行", flush=True)
+
     open('narration/list.txt', 'w').write(
         '\n'.join(f"file '{w}'" for w in wavs))
     r = subprocess.run(
