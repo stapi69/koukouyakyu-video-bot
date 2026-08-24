@@ -39,14 +39,6 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Google Cloud認証
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
-
-      - name: gcloudセットアップ
-        uses: google-github-actions/setup-gcloud@v2
-
       - name: 依存関係をインストール
         run: |
           sudo apt-get update
@@ -66,7 +58,8 @@ jobs:
           fi
 
       - name: ナレーション音声を生成（Google Cloud TTS）
-        continue-on-error: true
+        env:
+          GCP_TTS_API_KEY: ${{ secrets.GCP_TTS_API_KEY }}
         run: python3 scripts/generate_narration.py
 
       - name: コンポジションHTMLを生成
