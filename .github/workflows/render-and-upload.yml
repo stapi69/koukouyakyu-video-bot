@@ -5,6 +5,14 @@ on:
     types: [new-game, new-games-digest]
   workflow_dispatch:
     inputs:
+      dry_run:
+        description: 'アップロードをスキップ（テスト用）'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
       teamA:
         description: "チームA"
         required: true
@@ -73,21 +81,8 @@ jobs:
           fi
           test -f output_final.mp4 || (echo "FATAL: no output_final.mp4" && exit 1)
 
-      - name: YouTube OAuth トークン確認
-        env:
-          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
-          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-        run: |
-          HTTP_CODE=$(curl -s -o /tmp/tok.json -w "%{http_code}" -X POST https://oauth2.googleapis.com/token \
-            -d client_id="${YOUTUBE_CLIENT_ID}" \
-            -d client_secret="${YOUTUBE_CLIENT_SECRET}" \
-            -d refresh_token="${YOUTUBE_REFRESH_TOKEN}" \
-            -d grant_type=refresh_token)
-          [ "$HTTP_CODE" = "200" ] || (cat /tmp/tok.json && exit 1)
-          echo "TOKEN OK"
-
       - name: YouTube Shortsにアップロード
+        if: inputs.dry_run != 'true'
         env:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
@@ -95,8 +90,25 @@ jobs:
         run: node scripts/upload-youtube.js
 
       - name: 動画をArtifactとして保存
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: koshien-short
+          name: koshien-short-${{ github.run_number }}
           path: output_final.mp4
           retention-days: 7
+
+      - name: 失敗通知（LINE Notify）
+        if: failure()
+        continue-on-error: true
+        env:
+          LINE_NOTIFY_TOKEN: ${{ secrets.LINE_NOTIFY_TOKEN }}
+        run: |
+          if [ -n "${LINE_NOTIFY_TOKEN}" ]; then
+            curl -s -X POST https://notify-api.line.me/api/notify \
+              -H "Authorization: Bearer ${LINE_NOTIFY_TOKEN}" \
+              --data-urlencode "message=❌ 高校野球ボット失敗
+Run #${{ github.run_number }} / ${{ github.workflow }}
+https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          else
+            echo "LINE_NOTIFY_TOKEN 未設定のため通知スキップ"
+          fi
