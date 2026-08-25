@@ -70,6 +70,15 @@ main().catch((err) => {
   if (err.response) {
     console.error('response.status:', err.response.status);
     console.error('response.data:', JSON.stringify(err.response.data));
+
+    // クォータ超過の場合はArtifactに動画を残してexit 0（ワークフローを失敗させない）
+    const errors = err.response.data?.error?.errors || [];
+    if (errors.some(e => e.reason === 'uploadLimitExceeded')) {
+      console.log('');
+      console.log('⚠️ YouTubeアップロードクォータ超過。');
+      console.log('⚠️ 動画はArtifactに保存されます。翌日以降に手動アップロードしてください。');
+      process.exit(0); // 正常終了 → Artifactステップが確実に動く
+    }
   }
   process.exit(1);
 });
