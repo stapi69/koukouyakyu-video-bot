@@ -97,18 +97,18 @@ jobs:
           path: output_final.mp4
           retention-days: 7
 
-      - name: 失敗通知（LINE Notify）
+      - name: 失敗通知（Discord）
         if: failure()
         continue-on-error: true
         env:
-          LINE_NOTIFY_TOKEN: ${{ secrets.LINE_NOTIFY_TOKEN }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
-          if [ -n "${LINE_NOTIFY_TOKEN}" ]; then
-            curl -s -X POST https://notify-api.line.me/api/notify \
-              -H "Authorization: Bearer ${LINE_NOTIFY_TOKEN}" \
-              --data-urlencode "message=❌ 高校野球ボット失敗
-Run #${{ github.run_number }} / ${{ github.workflow }}
-https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ -n "${DISCORD_WEBHOOK_URL}" ]; then
+            curl -s -X POST "${DISCORD_WEBHOOK_URL}" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"content\": \"\u274c **高校野球ボット失敗** Run #${{ github.run_number }}\\nワークフロー: ${{ github.workflow }}\\nhttps://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+              }"
           else
-            echo "LINE_NOTIFY_TOKEN 未設定のため通知スキップ"
+            echo "DISCORD_WEBHOOK_URL 未設定のため通知スキップ"
           fi
